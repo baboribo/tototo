@@ -1,4 +1,3 @@
-import './style.css';
 import { identifyAudio, testSound } from './audio-file';
 import { at, type Signal } from './signal';
 import { MotionRenderer, frameTime } from './motion';
@@ -53,6 +52,13 @@ const tempoDetail = document.querySelector<HTMLElement>('#tempo-detail')!;
 const beatLight = document.querySelector<HTMLElement>('#beat-light')!;
 const drumPanel=new DrumPanel(audio,next=>{hits=next;syncFromAudio();});
 
+function updatePlayControl() {
+  const label = playing ? '일시정지' : '재생';
+  document.querySelector('#toggle-label')!.textContent = label;
+  toggle.setAttribute('aria-label', label);
+  toggle.dataset.playing = String(playing);
+}
+
 function effectiveTempo(): Tempo | null {
   const manual = Number(bpm.value);
   const detected = signal?.tempo;
@@ -96,6 +102,7 @@ function enableWhenReady() {
   ready = true; toggle.disabled = reset.disabled = scrubber.disabled = false;
   monitor.disabled=false;
   scrubber.max = String(currentDuration);
+  document.querySelector('#duration-readout')!.textContent = `${String(Math.floor(currentDuration / 60)).padStart(2, '0')}:${String(Math.floor(currentDuration % 60)).padStart(2, '0')}`;
   status.textContent = `${selectedName} · ${currentDuration.toFixed(1)}초 · 준비됨. 재생을 눌러주세요.`;
   draw(0);
 }
@@ -165,7 +172,7 @@ async function setPlaying(next: boolean) {
     await audio.play();
   } else audio.pause();
   if (version !== loadVersion) return;
-  playing = next; toggle.textContent = playing ? '일시정지' : '재생';
+  playing = next; updatePlayControl();
   status.dataset.error = 'false';
   status.textContent = `${selectedName} · ${playing ? '재생 중' : '일시정지'}`;
 }
@@ -179,7 +186,7 @@ function fail(message: string) {
   worker?.terminate(); worker = undefined;
   playing = false; ready = false; audio.pause();
   monitor.disabled=true;
-  toggle.textContent = '재생'; toggle.disabled = reset.disabled = scrubber.disabled = true;
+  updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true;
   status.textContent = message; status.dataset.error = 'true';
 }
 async function loadFile(file: File, restFile?:File) {
@@ -195,7 +202,8 @@ async function loadFile(file: File, restFile?:File) {
   bpm.value = ''; tempoScale.value = '1'; beatOffset.value = '0'; updateTempoUI();
   playing = ready = false; audio.pause(); audio.removeAttribute('src'); audio.load();
   if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = undefined; }
-  toggle.textContent = '재생'; toggle.disabled = reset.disabled = scrubber.disabled = true;
+  updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true;
+  document.querySelector('#duration-readout')!.textContent = '00:00';
   currentDuration = 0; scrubber.value = '0';
   selectedName = restFile?`${file.name} + ${restFile.name}`:file.name; sourceLabel.textContent = selectedName;
   status.dataset.error = 'false'; status.textContent = `${file.name} · 파일 확인 중…`;
@@ -221,7 +229,7 @@ toggle.addEventListener('click', async () => {
   const version = loadVersion;
   try { await setPlaying(!playing); } catch (error) {
     if (version !== loadVersion) return;
-    playing = false; toggle.textContent = '재생';
+    playing = false; updatePlayControl();
     status.dataset.error = 'true';
     status.textContent = error instanceof DOMException && error.name === 'NotAllowedError'
       ? '브라우저가 재생을 보류했습니다. 재생 버튼을 다시 눌러주세요.'
@@ -231,7 +239,7 @@ toggle.addEventListener('click', async () => {
 reset.addEventListener('click', () => { if (ready) { audio.currentTime = 0; clearAnalysis(); syncFromAudio(0); } });
 scrubber.disabled = true;
 scrubber.addEventListener('input', () => { if (ready) { audio.currentTime = Number(scrubber.value); clearAnalysis(); syncFromAudio(0); status.textContent = `${selectedName} · ${playing ? '재생 중' : '일시정지 · 위치 이동'}`; } });
-audio.addEventListener('ended', () => { playing = false; toggle.textContent = '재생'; status.textContent = `${selectedName} · 재생 완료`; clearAnalysis(); syncFromAudio(0); });
+audio.addEventListener('ended', () => { playing = false; updatePlayControl(); status.textContent = `${selectedName} · 재생 완료`; clearAnalysis(); syncFromAudio(0); });
 audio.addEventListener('canplay', () => {
   if (ready || !objectUrl || audio.src !== objectUrl) return;
   currentDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
@@ -268,6 +276,7 @@ document.querySelector('#rhythm')!.addEventListener('click', () => { void loadFi
 document.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } });
 document.addEventListener('drop', event => { event.preventDefault(); const file = event.dataTransfer?.files[0]; if (file) void loadFile(file); });
 document.addEventListener('keydown', event => {
+  if (event.target instanceof Element && event.target.closest('[role="slider"], [role="tab"], summary, a, [contenteditable="true"]')) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLSelectElement) return;
   if (event.key === ' ') { event.preventDefault(); toggle.click(); }
   if (ready && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
