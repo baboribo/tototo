@@ -13,7 +13,6 @@ const reset = document.querySelector<HTMLButtonElement>('#reset')!;
 const scrubber = document.querySelector<HTMLInputElement>('#scrubber')!;
 const readout = document.querySelector<HTMLElement>('#time-readout')!;
 const audio = document.querySelector<HTMLAudioElement>('#audio')!;
-const audioFile = document.querySelector<HTMLInputElement>('#audio-file')!;
 const sourceLabel = document.querySelector<HTMLElement>('#source-label')!;
 const meter = document.querySelector<HTMLElement>('#meter')!;
 const status = document.querySelector<HTMLElement>('#load-status')!;
@@ -252,7 +251,6 @@ audio.addEventListener('error', () => {
   if (!objectUrl || !audio.error) return;
   fail(`${selectedName} · ${audio.error.code === 4 ? '이 브라우저가 파일 형식 또는 코덱을 지원하지 않습니다.' : '오디오 데이터를 읽거나 디코딩하지 못했습니다.'} MP3 또는 PCM WAV로 변환한 파일을 시도하세요.`);
 });
-audioFile.addEventListener('change', () => { const file = audioFile.files?.[0]; audioFile.value = ''; if (file) void loadFile(file); });
 document.querySelector<HTMLInputElement>('#drum-file')!.addEventListener('change', event => {
   drumFile=(event.target as HTMLInputElement).files?.[0];applyStems.disabled=!(drumFile&&otherFile);
 });
@@ -273,8 +271,6 @@ monitor.addEventListener('change',()=>{
 });
 document.querySelector('#demo')!.addEventListener('click', () => { void loadFile(testSound()); });
 document.querySelector('#rhythm')!.addEventListener('click', () => { void loadFile(testSound(true)); });
-document.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } });
-document.addEventListener('drop', event => { event.preventDefault(); const file = event.dataTransfer?.files[0]; if (file) void loadFile(file); });
 document.addEventListener('keydown', event => {
   if (event.target instanceof Element && event.target.closest('[role="slider"], [role="tab"], summary, a, [contenteditable="true"]')) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLSelectElement) return;

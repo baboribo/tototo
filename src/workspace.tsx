@@ -1,8 +1,8 @@
 import './style.css';
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { AudioLines, ChevronLeft, ChevronRight, Download, FolderOpen, Headphones, Maximize2, PanelRightClose, Pause, Play, RotateCcw, SlidersHorizontal, Upload } from 'lucide-react';
+import { AudioLines, ChevronLeft, ChevronRight, Download, Headphones, Maximize2, PanelRightClose, Pause, Play, RotateCcw, SlidersHorizontal, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,6 +18,16 @@ function Hint({ text, children }: { text: string; children: ReactNode }) {
 
 function Field({ name, id, children }: { name: string; id: string; children: ReactNode }) {
   return <div className="field"><Label htmlFor={id}>{name}</Label>{children}</div>;
+}
+
+function StemFileInput({ id, label }: { id: 'drum-file' | 'other-file'; label: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [filename, setFilename] = useState('선택된 파일 없음');
+  return <div className="stem-file-row">
+    <div className="stem-file-copy"><strong>{label}</strong><span title={filename}>{filename}</span></div>
+    <Input ref={input} id={id} type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac" className="file-input" aria-label={`${label} 파일`} onChange={event => setFilename(event.currentTarget.files?.[0]?.name ?? '선택된 파일 없음')} />
+    <Button type="button" variant="outline" size="sm" aria-label={`${label} 파일 선택`} onClick={() => input.current?.click()}><Upload aria-hidden="true" />선택</Button>
+  </div>;
 }
 
 // Keep the existing audio engine's native input contract at the UI boundary.
@@ -44,7 +54,6 @@ function Workspace() {
         <span className="app-name">tototo</span>
         <Separator orientation="vertical" className="toolbar-divider" />
         <div className="document-name"><AudioLines aria-hidden="true" /><span id="source-label">파일 없음</span></div>
-        <Button size="sm" variant="outline" className="open-file" onClick={() => document.querySelector<HTMLInputElement>('#audio-file')?.click()}><FolderOpen aria-hidden="true" />파일 열기</Button>
         <Separator orientation="vertical" className="toolbar-divider" />
         <Hint text="설정 패널 표시 / 숨기기"><Button size="icon" variant="ghost" aria-label="설정 패널 숨기기" aria-pressed={false} onClick={event => {
           const shell = document.querySelector<HTMLElement>('#workspace')!;
@@ -84,27 +93,19 @@ function Workspace() {
             </TabsList>
             <div className="inspector-scroll">
               <TabsContent value="audio" forceMount className="inspector-content">
-                <section className="inspector-section">
+                <section className="inspector-section stems-panel">
                   <h2>입력 파일</h2>
-                  <label className="audio-drop" htmlFor="audio-file"><Upload aria-hidden="true" /><strong>오디오 파일 선택</strong><span>또는 여기에 파일 놓기</span><input id="audio-file" type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac" className="file-input" /></label>
-                  <p className="field-help">MP3, WAV, FLAC, OGG, M4A</p>
+                  <p className="field-help">같은 시작 시점에서 분리한 드럼과 나머지 스템을 선택하세요.</p>
+                  <div className="stem-file-list"><StemFileInput id="drum-file" label="드럼 스템" /><StemFileInput id="other-file" label="나머지 스템" /></div>
+                  <Button id="apply-stems" className="w-full" disabled>두 스템 불러오기</Button>
+                  <details className="technical-note"><summary>입력 안내</summary><p id="stem-mode">드럼과 나머지 파일은 같은 곡에서 같은 시작 시점으로 분리한 스템이어야 합니다.</p></details>
+                  <div className="stem-downloads"><a id="download-drums" hidden><Download aria-hidden="true" />드럼 저장</a><a id="download-other" hidden><Download aria-hidden="true" />나머지 저장</a></div>
                 </section>
                 <Separator />
                 <section className="inspector-section">
                   <h2>모니터링</h2>
                   <Field name="듣기" id="monitor"><NativeSelect id="monitor" disabled defaultValue="mix"><NativeSelectOption value="mix">전체 믹스</NativeSelectOption><NativeSelectOption value="drums">드럼만</NativeSelectOption><NativeSelectOption value="other">나머지만</NativeSelectOption></NativeSelect></Field>
                   <div className="detection-readout"><Headphones aria-hidden="true" /><span id="drum-readout">—</span></div>
-                </section>
-                <Separator />
-                <section className="inspector-section stems-panel">
-                  <h2>분리된 스템 사용</h2>
-                  <p className="field-help">드럼과 나머지 소리를 각각 불러옵니다.</p>
-                  <Field name="드럼" id="drum-file"><Input id="drum-file" type="file" accept="audio/*" /></Field>
-                  <Field name="나머지" id="other-file"><Input id="other-file" type="file" accept="audio/*" /></Field>
-                  <Button id="apply-stems" variant="outline" className="w-full" disabled>두 스템 적용</Button>
-                  <p className="field-help">두 파일의 시작 시점을 맞춰 주세요.</p>
-                  <details className="technical-note"><summary>분리 방식 안내</summary><p id="stem-mode">일반 오디오는 타악 성분을 자동으로 근사 분리합니다. 정확히 분리한 스템이 있으면 직접 입력할 수 있습니다.</p></details>
-                  <div className="stem-downloads"><a id="download-drums" hidden><Download aria-hidden="true" />드럼 저장</a><a id="download-other" hidden><Download aria-hidden="true" />나머지 저장</a></div>
                 </section>
                 <Separator />
                 <details className="diagnostics inspector-section"><summary>테스트 신호</summary><div className="diagnostic-actions"><Button id="rhythm" variant="outline" size="sm">리듬 테스트</Button><Button id="demo" variant="outline" size="sm">주파수 테스트</Button></div></details>
@@ -137,7 +138,7 @@ function Workspace() {
           </Tabs>
         </aside>
       </main>
-      <footer className="statusbar"><p id="load-status" role="status" aria-live="polite">오디오 파일을 열어 시작하세요.</p><span className="shortcut-hint"><kbd>Space</kbd> 재생 / 일시정지</span></footer>
+      <footer className="statusbar"><p id="load-status" role="status" aria-live="polite">드럼과 나머지 스템을 선택하세요.</p><span className="shortcut-hint"><kbd>Space</kbd> 재생 / 일시정지</span></footer>
       <audio id="audio" preload="metadata" />
     </div>
   </TooltipProvider>;

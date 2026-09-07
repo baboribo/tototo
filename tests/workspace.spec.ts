@@ -1,5 +1,28 @@
 import { test, expect } from '@playwright/test';
 
+function wavTone(frequency: number, seconds = 2, sampleRate = 22050) {
+  const frames = seconds * sampleRate;
+  const buffer = Buffer.alloc(44 + frames * 2);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + frames * 2, 4);
+  buffer.write('WAVEfmt ', 8);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(frames * 2, 40);
+  for (let index = 0; index < frames; index++) {
+    const envelope = index % Math.floor(sampleRate / 2) < 900 ? Math.exp(-(index % Math.floor(sampleRate / 2)) / 230) : .08;
+    const sample = Math.sin(2 * Math.PI * frequency * index / sampleRate) * envelope;
+    buffer.writeInt16LE(Math.round(sample * 24000), 44 + index * 2);
+  }
+  return buffer;
+}
+
 test('layout keeps preview and transport on screen at desktop and narrow widths', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -84,19 +107,42 @@ test('tabs preserve audio, canvas and controls; playback, seek and settings stay
   expect(errors).toEqual([]);
 });
 
-test('invalid files show recoverable feedback and file picker works from any tab', async ({page}) => {
+test('only the two-stem input is exposed and invalid stems show recoverable feedback', async ({page}) => {
   await page.goto('/');
   await expect(page.locator('#drum-spectrum')).toBeAttached();
   await expect(page.locator('#download-drums')).toBeHidden();
-  await page.getByRole('tab',{name:'화면',exact:true}).click();
-  const chooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button',{name:'파일 열기',exact:true}).click();
-  const chooser = await chooserPromise;
-  await chooser.setFiles({name:'invalid.wav',mimeType:'audio/wav',buffer:Buffer.from('invalid audio')});
+  await expect(page.locator('#audio-file')).toHaveCount(0);
+  await expect(page.getByRole('heading',{name:'분리된 스템 사용'})).toHaveCount(0);
+  await page.locator('#drum-file').setInputFiles({name:'invalid-drums.wav',mimeType:'audio/wav',buffer:Buffer.from('invalid drums')});
+  await expect(page.locator('#apply-stems')).toBeDisabled();
+  await page.locator('#other-file').setInputFiles({name:'invalid-other.wav',mimeType:'audio/wav',buffer:Buffer.from('invalid other')});
+  await expect(page.locator('#apply-stems')).toBeEnabled();
+  await expect(page.getByTitle('invalid-drums.wav')).toBeVisible();
+  await expect(page.getByTitle('invalid-other.wav')).toBeVisible();
+  await page.locator('#apply-stems').click();
   await expect(page.locator('#load-status')).toHaveAttribute('data-error','true');
   await expect(page.locator('#toggle')).toBeDisabled();
   await page.getByRole('button',{name:'설정 패널 숨기기',exact:true}).click();
   await expect(page.locator('.inspector')).toBeHidden();
   await page.getByRole('button',{name:'설정 패널 표시',exact:true}).click();
   await expect(page.locator('.inspector')).toBeVisible();
+});
+
+test('two valid stems load as the primary source', async ({page}) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('#drum-spectrum')).toBeAttached();
+  await page.locator('#drum-file').setInputFiles({name:'drums.wav',mimeType:'audio/wav',buffer:wavTone(90)});
+  await page.locator('#other-file').setInputFiles({name:'other.wav',mimeType:'audio/wav',buffer:wavTone(440)});
+  await page.locator('#apply-stems').click();
+  await expect(page.locator('#toggle')).toBeEnabled({timeout:30000});
+  await expect(page.locator('#source-label')).toHaveText('drums.wav + other.wav');
+  await expect(page.locator('#load-status')).not.toHaveAttribute('data-error','true');
+  await expect(page.locator('#download-drums')).toBeVisible();
+  await expect(page.locator('#download-other')).toBeVisible();
+  await page.locator('#toggle').click();
+  await expect.poll(() => page.locator('#audio').evaluate((node: HTMLAudioElement) => node.currentTime)).toBeGreaterThan(.1);
+  await page.locator('#toggle').click();
+  expect(errors).toEqual([]);
 });

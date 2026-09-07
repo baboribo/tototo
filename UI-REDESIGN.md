@@ -2,14 +2,15 @@
 
 ## Design decisions
 
-The primary flow is open audio, play and observe, then adjust the response.
+The primary flow is select the drum and non-drum stems, load them together, play and observe, then adjust the response.
 
-- A compact file toolbar replaces the headline and introductory copy.
+- A compact document toolbar replaces the headline and introductory copy.
 - The canvas occupies the working area, with a persistent transport underneath.
 - Audio, visual settings and drum detection use separate inspector tabs.
 - The inspector scrolls independently on desktop and moves below the preview on narrow screens.
 - A warm neutral light surface separates the application controls from the unchanged canvas image. Olive is reserved for active controls.
 - Icons use Lucide. No emoji, sample-music cards, decorative charts, status badges or promotional copy.
+- The primary input accepts a synchronized drum stem and non-drum stem. The non-working single-file input is not exposed.
 - Empty, loading and error feedback remains in the status bar.
 
 ## Sources read before implementation
