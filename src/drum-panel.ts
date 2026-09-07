@@ -28,14 +28,14 @@ export class DrumPanel {
   constructor(private audio:HTMLAudioElement,private changed:(hits:DrumHit[])=>void){
     const host=document.createElement('section');host.className='drum-eq';host.setAttribute('aria-label','드럼 스템 EQ 반응 조절');
     host.innerHTML=`<div class="eq-heading"><div><p class="eyebrow">DRUM STEM / FREQUENCY TRIGGER</p><h2>드럼 반응 조절</h2></div><button id="eq-reset">기본값 복원</button></div>
-    <p>드럼 스템의 주파수를 보며 악기별 타일 반응을 조절하세요. 그래프 양쪽 선을 드래그하면 대역을 바꿀 수 있습니다.</p>
+    <p>드럼 스템의 주파수를 보며 악기별 타일·펜 반응을 조절하세요. 그래프 양쪽 선을 드래그하면 대역을 바꿀 수 있습니다.</p>
     <div class="eq-tabs" role="group" aria-label="드럼 채널"></div>
     <canvas id="drum-spectrum" width="960" height="260" aria-label="재생 시점의 드럼 주파수 스펙트럼과 선택 대역"></canvas>
     <p>대역 세기 / 반응 기준 — 가로 바를 위아래로 드래그하세요. 낮출수록 작은 소리에도 반응합니다.</p>
     <div class="eq-threshold-area"><canvas id="drum-level" width="960" height="180" aria-label="선택 대역의 최근 3초 세기와 감지 임계값"></canvas><div id="threshold-bar" role="slider" tabindex="0" aria-label="선택 드럼 감지 임계값" aria-orientation="vertical" aria-valuemin="0.02" aria-valuemax="1.5"><span></span></div></div>
     <p class="eq-note">선 이상이면 세기 조건을 충족합니다. 실제 타격은 어택 조건과 재타격 간격도 충족해야 합니다. 밝은 점은 감지된 타격입니다. 위 주파수 그래프와 달리 이 그래프는 선택 대역 전체의 분석 게인이 반영된 세기입니다.</p>
     <div class="eq-controls"></div><div class="eq-footer"><button id="eq-solo" disabled>선택 대역만 듣기</button><output id="eq-status" aria-live="polite">오디오를 먼저 불러오세요.</output></div>
-    <p class="eq-note">분석 게인은 타일 감지에만 적용됩니다. 단독 듣기는 드럼 스템에 대역 필터를 적용하며 원본·저장 파일은 바꾸지 않습니다. 주파수가 겹치는 악기는 완전히 분리되지 않습니다. 그래프는 사전 분석된 FFT를 재생 위치에 맞춰 표시합니다.</p>`;
+    <p class="eq-note">분석 게인은 타일·펜 타격 감지에 적용됩니다. 단독 듣기는 드럼 스템에 대역 필터를 적용하며 원본·저장 파일은 바꾸지 않습니다. 주파수가 겹치는 악기는 완전히 분리되지 않습니다. 그래프는 사전 분석된 FFT를 재생 위치에 맞춰 표시합니다.</p>`;
     document.querySelector('.stems-panel')!.after(host);
     this.canvas=host.querySelector('canvas')!;this.controls=host.querySelector('.eq-controls')!;this.info=host.querySelector('#eq-status')!;this.soloButton=host.querySelector('#eq-solo')!;
     this.thresholdCanvas=host.querySelector('#drum-level')!;this.thresholdBar=host.querySelector('#threshold-bar')!;this.thresholdArea=host.querySelector('.eq-threshold-area')!;
@@ -71,7 +71,7 @@ export class DrumPanel {
   private renderControls(){
     const c=this.channels[this.selected];this.controls.replaceChildren();
     this.tabs.forEach((b,i)=>b.setAttribute('aria-pressed',String(i===this.selected)));
-    const enabled=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=c.enabled;enabled.append(check,' 타일 반응 켜기');check.onchange=()=>{c.enabled=check.checked;this.schedule();};this.controls.append(enabled);
+    const enabled=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=c.enabled;enabled.append(check,' 타일·펜 반응 켜기');check.onchange=()=>{c.enabled=check.checked;this.schedule();};this.controls.append(enabled);
     const fields:[keyof Channel,string,number,number,number][]=[['low','하한 Hz',20,19990,1],['high','상한 Hz',30,20000,1],['gain','분석 게인 dB',-18,18,0.5],['threshold','감지 임계값',0.02,1.5,0.01],['attack','어택 임계값',0.005,0.5,0.005],['gap','재타격 간격 ms',40,600,10]];
     for(const [key,name,min,max,step] of fields){
       const label=document.createElement('label'),input=document.createElement('input');label.textContent=name;input.type='number';input.min=String(min);input.max=String(max);input.step=String(step);input.value=String(c[key]);input.setAttribute('aria-label',`${c.kind.toUpperCase()} ${name}`);

@@ -168,12 +168,87 @@ function hitPosition(hit) {
   return { x: 130 + Math.floor(random() * 4) * 15, y: 90 + Math.floor(random() * 4) * 15 };
 }
 
+// src/reactive-ink.ts
+var clamp = (v) => Math.max(0, Math.min(1, v));
+function peakFeature(signal2, time, window) {
+  const feature = silent();
+  if (!signal2 || time < 0) return feature;
+  const last = Math.min(Math.floor(time * signal2.rate), Math.ceil(signal2.duration * signal2.rate) - 1);
+  const first = Math.max(0, Math.ceil((time - window) * signal2.rate - 1e-6));
+  for (let frame = first; frame <= last; frame++) {
+    const sample = at(signal2, frame / signal2.rate + 1e-8);
+    feature.level = Math.max(feature.level, sample.level);
+    feature.onset = Math.max(feature.onset, sample.onset);
+    feature.bands = feature.bands.map((v, band) => Math.max(v, sample.bands[band]));
+  }
+  return feature;
+}
+var PERIMETER_SPEED = 32;
+function perimeter(drums, other, time, gain, hold, source2 = "both", impact = 1) {
+  const bars = [];
+  const primary = source2 === "drums" ? drums : other;
+  const now = peakFeature(primary, time, hold);
+  const percussion = peakFeature(source2 === "both" ? drums : void 0, time, hold);
+  const level = Math.max(now.level, percussion.level) * gain;
+  if (level < 0.045) return { bars, rings: 0 };
+  const transport = Math.round(time * PERIMETER_SPEED);
+  const bands = [0, 2, 3, 1, 3, 2, 0, 4, 2, 1, 2, 3];
+  for (let slot = 0; slot < 12; slot++) {
+    const band = bands[slot];
+    const delay = slot % 3 * 0.04;
+    const sample = peakFeature(primary, time - delay, hold);
+    const drum = peakFeature(source2 === "both" ? drums : void 0, time - delay, hold);
+    const energy = clamp(Math.max(sample.bands[band], drum.bands[band] * 0.85) * gain);
+    const attack = clamp(Math.max(sample.onset * sample.bands[band], drum.onset * drum.bands[band]) * gain * impact);
+    const drive = clamp(energy * 0.8 + attack * 0.55);
+    if (drive < 0.24) continue;
+    const tone2 = drive > 0.62 ? 3 : drive > 0.4 ? 2 : 1;
+    const length = drive > 0.78 ? 25 : drive > 0.48 ? 18 : 12;
+    const start = Math.round(slot * 86 / 3 - length / 2) - transport;
+    for (let i = 0; i < length; i++) {
+      const distance = ((start + i) % 344 + 344) % 344;
+      const side = Math.floor(distance / 86), p = distance % 86;
+      const [x, y] = side === 0 ? [117 + p, 77] : side === 1 ? [200, 77 + p] : side === 2 ? [202 - p, 160] : [117, 162 - p];
+      bars.push({ x, y, width: side % 2 ? 3 : 1, height: side % 2 ? 1 : 3, tone: tone2, phase: i });
+    }
+  }
+  const accent = clamp(Math.max(now.onset, percussion.onset) * gain * impact);
+  return { bars, rings: accent > 0.82 ? 3 : accent > 0.55 ? 2 : accent > 0.28 ? 1 : 0 };
+}
+var TRACE_SPEED = 160;
+var TRACE_START = 262;
+var TRACE_END = 63;
+var travel = (TRACE_START - TRACE_END) / TRACE_SPEED;
+function drumInk(hits, time, gain, hold) {
+  const columns = /* @__PURE__ */ new Map();
+  let pen = 0, eraser = 0;
+  const transport = Math.round(time * TRACE_SPEED);
+  for (const hit of recentHits(hits, time, travel + Math.max(hold, 0.15), Infinity)) {
+    const age = time - hit.time, strength = clamp(hit.strength * gain);
+    if (strength < 0.08) continue;
+    const amplitude = hit.kind === "kick" || hit.kind === "tom" ? 3 : hit.kind === "snare" ? 2 : 1;
+    const height = Math.max(1, Math.round(amplitude * strength));
+    const halfWidth = hit.kind === "cymbal" ? 5 : hit.kind === "kick" || hit.kind === "tom" ? 3 : hit.kind === "snare" ? 2 : 0;
+    const x = TRACE_START + Math.round(hit.time * TRACE_SPEED) - transport;
+    if (age < Math.max(hold, 0.1)) pen = Math.max(pen, Math.min(2, height));
+    if (age >= travel && age < travel + Math.max(hold, 0.1)) eraser = Math.max(eraser, Math.min(2, height));
+    for (let dx = -halfWidth; dx <= halfWidth; dx++) {
+      const px = x + dx;
+      if (px < TRACE_END || px > TRACE_START) continue;
+      const h = Math.max(0, height - Math.floor(Math.abs(dx) * height / (halfWidth + 1)));
+      const previous = columns.get(px);
+      if (!previous || previous.height < h) columns.set(px, { x: px, height: h, tone: halfWidth > 2 ? 2 : 3, phase: dx + halfWidth });
+    }
+  }
+  return { trace: [...columns.values()].sort((a2, b2) => a2.x - b2.x), pen, eraser };
+}
+
 // src/motion.ts
 var frameTime = (time, fps = 10) => Math.floor((Math.max(0, time) + 1e-6) * fps) / fps;
-var clamp = (value) => Math.max(0, Math.min(1, value));
+var clamp2 = (value) => Math.max(0, Math.min(1, value));
 var valueAt = (signal2, time, gain) => {
   const value = at(signal2, time);
-  return { ...value, bands: value.bands.map((v) => clamp(v * gain)), level: clamp(value.level * gain) };
+  return { ...value, bands: value.bands.map((v) => clamp2(v * gain)), level: clamp2(value.level * gain) };
 };
 function planFrame(signal2, time, gain = 1, options = {}) {
   const fps = options.fps ?? 10;
@@ -190,7 +265,7 @@ function planFrame(signal2, time, gain = 1, options = {}) {
   const otherNow = valueAt(other, time, gain);
   const beat = beatPulse(options.tempo === void 0 ? signal2?.tempo : options.tempo, time, Math.max(1 / fps, 0.09));
   const impact = options.impact ?? 1;
-  const hit = active ? clamp(Math.max(now.onset * 1.8, beat.pulse * 0.85) * impact) : 0;
+  const hit = active ? clamp2(Math.max(now.onset * 1.8, beat.pulse * 0.85) * impact) : 0;
   const plan = { tiles: [], bars: [], trace: [], rings: 0, pen: 0, eraser: 0, active };
   const tempo = options.tempo === void 0 ? signal2?.tempo : options.tempo;
   const period = tempo && tempo.confidence >= 0.24 ? 60 / tempo.bpm : 0.42, speed = 15 / period;
@@ -224,34 +299,29 @@ function planFrame(signal2, time, gain = 1, options = {}) {
       const x = 130 + column * 15 - transport;
       if (x + 15 <= 130) continue;
       const envelope = age < 0.1 ? 1 : age < 0.2 ? event.kind === "kick" || event.kind === "tom" ? 0.8 : 0.5 : 0.15;
-      const intensity = clamp(event.strength * gain * (0.5 + impact) * envelope);
+      const intensity = clamp2(event.strength * gain * (0.5 + impact) * envelope);
       const tone2 = intensity > 0.65 ? 3 : intensity > 0.3 ? 2 : 1;
       cells.set(`${column},${position.y}`, { x, y: position.y, tone: tone2 });
     }
     plan.tiles = [...cells.values()];
     plan.active = plan.tiles.length > 0 || otherNow.level > 0.045;
   }
-  if (otherNow.level > 0.045) {
-    for (let side = 0; side < 4; side++) for (let p = 0; p < 86; p++) {
-      const birth = Math.floor((time - (86 - p) / 32 - side * 0.21) / 0.42) * 0.42;
-      const feature = valueAt(other, birth, gain);
-      const v = feature.bands[[0, 2, 1, 3][side]];
-      const tone2 = v > 0.5 ? 3 : v > 0.35 ? 2 : v > 0.24 ? 1 : 0;
-      if (!tone2) continue;
-      const point = side === 0 ? [117 + p, 77] : side === 1 ? [200, 77 + p] : side === 2 ? [203 - p, 160] : [117, 163 - p];
-      plan.bars.push({ x: point[0], y: point[1], width: side % 2 ? 3 : 1, height: side % 2 ? 1 : 3, tone: tone2 });
-    }
-    const ringHit = options.otherSignal ? clamp(otherNow.onset * 1.8) : hit;
-    plan.rings = ringHit > 0.9 ? 3 : ringHit > 0.65 ? 2 : otherNow.bands[3] > 0.7 ? 2 : otherNow.onset > 0.3 ? 1 : 0;
+  const border = perimeter(signal2, other, time, gain, Math.max(1 / fps, 0.08), options.perimeterSource, impact);
+  plan.bars = border.bars;
+  plan.rings = border.rings;
+  plan.active ||= border.bars.length > 0 || border.rings > 0;
+  if (options.hits) {
+    Object.assign(plan, drumInk(options.hits, time, gain, 1 / fps));
+    return plan;
   }
   for (let x = 63; x <= 260; x++) {
-    const feature = valueAt(other, time - (260 - x) / 160, gain);
-    const strength = clamp(Math.max(0, feature.onset - 0.08) * 1.8 + Math.max(0, feature.bands[3] - 0.4) * 0.3);
+    const feature = valueAt(signal2, time - (260 - x) / 160, gain);
+    const strength = clamp2(Math.max(0, feature.onset - 0.08) * 1.8 + Math.max(0, feature.bands[3] - 0.4) * 0.3);
     const height = feature.level > 0.035 ? Math.round(Math.max(0, strength - 0.3) * 4) : 0;
     if (height) plan.trace.push({ x, height, tone: strength > 0.4 ? 2 : 3 });
   }
-  plan.pen = Math.round(clamp(otherNow.onset * 2) * 2);
-  plan.eraser = Math.round(clamp(at(other, time - 197 / 160).onset * 2) * 2);
+  plan.pen = Math.round(clamp2(now.onset * 2) * 2);
+  plan.eraser = Math.round(clamp2(at(signal2, time - 197 / 160).onset * 2) * 2);
   return plan;
 }
 

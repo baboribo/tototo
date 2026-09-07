@@ -10,7 +10,7 @@
       <header>
         <p class="eyebrow">TERRACE / SOUND IN INK</p>
         <h1>소리가 남기는 모양</h1>
-        <p class="lede">드럼이 두드리는 중앙 사각형의 랜덤 타일, 나머지 소리가 남기는 테두리와 펜의 흔적.</p>
+        <p class="lede">드럼이 찍는 타일과 펜의 흔적, 소리에 맞춰 끊기고 채워지는 테두리.</p>
       </header>
       <section class="stage-wrap" aria-label="오디오에 반응하는 비주얼라이저"><canvas id="visualizer" width="960" height="720"></canvas><div class="time-readout" id="time-readout">00:00.000</div></section>
       <section class="controls" aria-label="오디오 재생 제어">
@@ -29,6 +29,7 @@
       <section class="beat-panel" aria-label="자동 박자 분석"><span id="beat-light" aria-hidden="true"></span><strong id="tempo-readout">BPM —</strong><span id="tempo-detail">오디오를 넣으면 박자를 자동으로 찾습니다</span><span id="fps-readout">10 FPS</span></section>
       <details class="appearance"><summary>화면 · 박자 설정</summary>
         <label>모션 프레임 <select id="fps"><option value="10">10 FPS</option><option value="12">12 FPS</option><option value="15">15 FPS</option><option value="24">24 FPS</option><option value="30">30 FPS</option><option value="60">60 FPS</option></select></label>
+        <label>테두리 반응 소리 <select id="perimeter-source"><option value="both">드럼 + 나머지</option><option value="drums">드럼</option><option value="other">나머지</option></select></label>
         <label>박자 강조 <input id="impact" type="range" min="0" max="1.6" step="0.05" value="1.1" /></label>
         <label>반응 감도 <input id="sensitivity" type="range" min="0.5" max="1.8" step="0.05" value="1" /></label>
         <label>BPM 보정 <input id="bpm" type="number" min="40" max="240" step="0.25" placeholder="자동" /></label>

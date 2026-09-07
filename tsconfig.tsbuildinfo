@@ -1,1 +1,1 @@
-{"root":["./src/analysis.worker.ts","./src/audio-file.ts","./src/drum-eq.ts","./src/drum-panel.ts","./src/drums.ts","./src/main.ts","./src/motion.ts","./src/score.ts","./src/separation.ts","./src/signal.ts","./src/tempo.ts"],"version":"5.9.3"}
+{"root":["./src/analysis.worker.ts","./src/audio-file.ts","./src/drum-eq.ts","./src/drum-panel.ts","./src/drums.ts","./src/main.ts","./src/motion.ts","./src/reactive-ink.ts","./src/score.ts","./src/separation.ts","./src/signal.ts","./src/tempo.ts"],"version":"5.9.3"}

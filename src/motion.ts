@@ -1,13 +1,14 @@
 import { at, type Signal } from './signal';
 import { beatPulse, type Tempo } from './tempo';
 import { recentHits, hitPosition, type DrumHit } from './drums';
+import { perimeter, drumInk, type InkBar, type InkMark, type PerimeterSource } from './reactive-ink';
 
-export type MotionOptions = { fps?: number; impact?: number; tempo?: Tempo | null; hits?: DrumHit[]; otherSignal?: Signal };
+export type MotionOptions = { fps?: number; impact?: number; tempo?: Tempo | null; hits?: DrumHit[]; otherSignal?: Signal; perimeterSource?: PerimeterSource };
 // Browser range/media values may land fractions of a microsecond below a frame.
 export const frameTime = (time: number, fps = 10) => Math.floor((Math.max(0, time) + 1e-6) * fps) / fps;
 
 export type Tile = { x: number; y: number; tone: number };
-export type FramePlan = { tiles: Tile[]; bars: { x: number; y: number; width: number; height: number; tone: number }[]; trace: { x: number; height: number; tone: number }[]; rings: number; pen: number; eraser: number; active: boolean };
+export type FramePlan = { tiles: Tile[]; bars: InkBar[]; trace: InkMark[]; rings: number; pen: number; eraser: number; active: boolean };
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 const valueAt = (signal: Signal | undefined, time: number, gain: number) => {
   const value = at(signal, time);
@@ -78,31 +79,24 @@ export function planFrame(signal: Signal | undefined, time: number, gain = 1, op
     plan.tiles=[...cells.values()];
     plan.active=plan.tiles.length>0||otherNow.level>0.045;
   }
-  // Fixed perimeter, four independently sampled printed ribbons. All lengths
-  // and corners come from masks, not volume-driven zoom or scaling.
-  if (otherNow.level>0.045) {
-    for (let side = 0; side < 4; side++) for (let p = 0; p < 86; p++) {
-      const birth = Math.floor((time - (86 - p) / 32 - side * 0.21) / 0.42) * 0.42;
-      const feature = valueAt(other, birth, gain);
-      const v = feature.bands[[0, 2, 1, 3][side]];
-      const tone = v > 0.5 ? 3 : v > 0.35 ? 2 : v > 0.24 ? 1 : 0;
-      if (!tone) continue;
-      const point = side === 0 ? [117 + p, 77] : side === 1 ? [200, 77 + p] : side === 2 ? [203 - p, 160] : [117, 163 - p];
-      plan.bars.push({ x: point[0], y: point[1], width: side % 2 ? 3 : 1, height: side % 2 ? 1 : 3, tone });
-    }
-    const ringHit=options.otherSignal?clamp(otherNow.onset*1.8):hit;
-    plan.rings = ringHit > 0.9 ? 3 : ringHit > 0.65 ? 2 : otherNow.bands[3] > 0.7 ? 2 : otherNow.onset > 0.3 ? 1 : 0;
+  const border = perimeter(signal, other, time, gain, Math.max(1 / fps, 0.08), options.perimeterSource, impact);
+  plan.bars = border.bars;
+  plan.rings = border.rings;
+  plan.active ||= border.bars.length > 0 || border.rings > 0;
+  if (options.hits) {
+    Object.assign(plan, drumInk(options.hits, time, gain, 1 / fps));
+    return plan;
   }
   // Pen tip writes at the right; the same amplitude history reaches the eraser
   // later. Continuous columns produce irregular connected marks, not bobbing dots.
   for (let x = 63; x <= 260; x++) {
-    const feature = valueAt(other, time - (260 - x) / 160, gain);
+    const feature = valueAt(signal, time - (260 - x) / 160, gain);
     const strength = clamp(Math.max(0, feature.onset - 0.08) * 1.8 + Math.max(0, feature.bands[3] - 0.4) * 0.3);
     const height = feature.level > 0.035 ? Math.round(Math.max(0, strength - 0.3) * 4) : 0;
     if (height) plan.trace.push({ x, height, tone: strength > 0.4 ? 2 : 3 });
   }
-  plan.pen = Math.round(clamp(otherNow.onset * 2) * 2);
-  plan.eraser = Math.round(clamp(at(other, time - 197 / 160).onset * 2) * 2);
+  plan.pen = Math.round(clamp(now.onset * 2) * 2);
+  plan.eraser = Math.round(clamp(at(signal, time - 197 / 160).onset * 2) * 2);
   return plan;
 }
 
@@ -143,11 +137,12 @@ export class MotionRenderer {
       if (plan.rings === 3) { this.dottedBox(125, 85, 70); this.dottedBox(123, 83, 74); }
       for (const bar of plan.bars) for (let yy = 0; yy < bar.height; yy++) for (let xx = 0; xx < bar.width; xx++) {
         const x = bar.x + xx, y = bar.y + yy;
-        if (bar.tone === 3 || (bar.tone === 2 ? (x + y) % 3 !== 0 : x % 3 === 0 && y % 3 === 0)) this.rect(x, y, 1, 1);
+        const across = bar.width === 3 ? xx : yy;
+        if (bar.tone === 3 || (bar.tone === 2 ? (bar.phase + across) % 3 !== 0 : bar.phase % 3 === 0 && across === 1)) this.rect(x, y, 1, 1);
       }
     }
     for (const mark of plan.trace) for (let y = -mark.height; y <= mark.height; y++) {
-      const phase = mark.x + Math.floor(time * 160);
+      const phase = mark.phase ?? mark.x + Math.floor(time * 160);
       if (mark.tone === 3 || (phase + y + 1000) % 3 !== 0) this.rect(mark.x, 176 + y, 1, 1);
     }
     // Eraser: stippled rubber block with an outlined unfilled cap.

@@ -6,6 +6,7 @@ import { beatPulse, type Tempo } from './tempo';
 import { recentHits, type DrumHit } from './drums';
 import { wav } from './separation';
 import { DrumPanel } from './drum-panel';
+import type { PerimeterSource } from './reactive-ink';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#visualizer')!;
 const toggle = document.querySelector<HTMLButtonElement>('#toggle')!;
@@ -42,6 +43,7 @@ const renderer = new MotionRenderer(canvas);
 const sensitivity = document.querySelector<HTMLInputElement>('#sensitivity')!;
 const caption = document.querySelector<HTMLInputElement>('#caption')!;
 const fps = document.querySelector<HTMLSelectElement>('#fps')!;
+const perimeterSource = document.querySelector<HTMLSelectElement>('#perimeter-source')!;
 const impact = document.querySelector<HTMLInputElement>('#impact')!;
 const bpm = document.querySelector<HTMLInputElement>('#bpm')!;
 const tempoScale = document.querySelector<HTMLSelectElement>('#tempo-scale')!;
@@ -67,7 +69,7 @@ function updateTempoUI() {
 function clamp(value: number, min = 0, max = 1) { return Math.max(min, Math.min(max, value)); }
 function draw(time: number, _delta = 0) {
   const tempo = effectiveTempo();
-  renderer.render(signal, time, Number(sensitivity.value), caption.value, { fps: Number(fps.value), impact: Number(impact.value), tempo, hits, otherSignal });
+  renderer.render(signal, time, Number(sensitivity.value), caption.value, { fps: Number(fps.value), impact: Number(impact.value), tempo, hits, otherSignal, perimeterSource: perimeterSource.value as PerimeterSource });
   document.querySelector('#drum-readout')!.textContent=recentHits(hits,frameTime(time,Number(fps.value))).map(h=>h.kind.toUpperCase()).filter((v,i,a)=>a.indexOf(v)===i).join(' · ')||'—';
   const feature = at(signal, time);
   readout.textContent = `${String(Math.floor(time / 60)).padStart(2, '0')}:${(time % 60).toFixed(3).padStart(6, '0')}`;
@@ -151,7 +153,7 @@ async function analyseFile(file: File, version: number, restFile?:File) {
 }
 sensitivity.addEventListener('input', () => syncFromAudio());
 caption.addEventListener('input', () => syncFromAudio());
-for (const control of [fps, impact, bpm, tempoScale, beatOffset]) control.addEventListener('input', () => { updateTempoUI(); syncFromAudio(); });
+for (const control of [fps, impact, bpm, tempoScale, beatOffset, perimeterSource]) control.addEventListener('input', () => { updateTempoUI(); syncFromAudio(); });
 
 async function setPlaying(next: boolean) {
   if (!ready) return;

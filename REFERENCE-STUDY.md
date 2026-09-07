@@ -1,5 +1,18 @@
 # Terrace motion study
 
+## 2026-09-07 — current implementation
+
+The linked YouTube page was opened directly and identified as **テラス席**, channel **俷**. Current inspection sampled 0 s, 5 s and adjacent steps, 53.925 s, 107.85 s, and 161.775–162.775 s with paused frame steps. Screenshots immediately after a seek can still show the previous decoded frame; follow-up captures were used for comparisons. This was discrete visual sampling, not a claim to have heard or measured the entire audio track.
+
+Visible evidence: the outer stroke consists of separate solid/stippled bars and corner pieces, with fixed square bounds and thickness. The fragment endpoints move across adjacent frames; treating the segments as stationary flashing slots misses that movement. Pen marks form a separate, faster leftward history with sparse dots, short strokes and occasional thicker blobs.
+
+Implementation hypotheses: twelve separated fragments travel counterclockwise at 32 logical pixels/s on the 86-pixel square path, bending across corners. Their audio-band energy and attack set visibility, quantized length and tone; texture travels with each piece. The exact direction/speed and source frequency mapping are design interpretations, not recovered author settings. Default input combines the two analysed stems by feature maxima; users can select drums or the remainder separately. The square itself does not rotate or scale.
+
+Pen marks now come from detected drum attacks, not the non-drum envelope. The right nib at x=262 writes each mark; it travels at 160 pixels/s to the eraser at x=63. Drums control ink events; BPM alone never generates them. Existing 10 FPS hold remains, with short audio peak windows to retain intervening transients.
+
+These rules supersede the old perimeter ribbons and non-drum pen mapping below. The following sections are historical notes from the cloned repository, not additional observations made in this revision.
+
+
 Reference: https://www.youtube.com/watch?v=yHKMPtL2kf8 (179.781 seconds)
 
 ## Evidence and limits

@@ -24,7 +24,7 @@ for(const h of hits){const p=hitPosition(h);assert.ok(p.x>=130&&p.x<=175&&p.y>=9
 assert.ok(cells.size>=12,'random hits distributed throughout central grid');
 const options={hits:[{...hits[0],time:0.2}],otherSignal:silence,fps:10};
 const attack=planFrame(pulses,0.21,1,options);
-assert.equal(attack.tiles.length,1);assert.equal(attack.bars.length,0);assert.equal(attack.trace.length,0);
+assert.equal(attack.tiles.length,1);assert.ok(attack.trace.length>0,'drum attacks write pen ink even with silent non-drum stem');
 assert.deepEqual(attack,planFrame(pulses,0.29,1,options),'10 FPS frame hold');
 const moved=planFrame(pulses,0.4,1,options);
 assert.equal(moved.tiles.length,1);

@@ -1,5 +1,10 @@
 # Central drum tiles
 
+## Current routing (2026-09-07)
+
+Detected drum hits now drive both the central tiles and the pen. The EQ channel enable, bands and thresholds update both. The perimeter defaults to features from drums plus remainder, with a source selector in the appearance settings. Its segmented pieces move along the square, while signal energy and attacks control their ink. The eraser follows the arrival of the same written mark, about 1.244 seconds later. Historical non-drum pen descriptions below are superseded.
+
+
 ## Drum frequency control panel
 
 Threshold control: a separate linear band-level history below the spectrum shows the last three seconds and detected-hit dots. Its horizontal threshold bar can be dragged vertically or adjusted with arrows (Shift for 0.1 steps, Home/End for bounds). It shares the channel's existing 0.02–1.5 numeric threshold and recalculates actual hits. This is a necessary level gate, not a replacement for attack and retrigger conditions. The linear level plot intentionally does not reuse the logarithmic per-frequency spectrum's vertical scale. Browser verification confirmed bar/number synchronization and the 445-hit result at KICK threshold 1.5.
@@ -12,7 +17,7 @@ Validation: verify-drum-eq.ts tests spectral data, band changes, enable, thresho
 
 The central 4×4 square stays in place. Each detected drum attack selects a seeded random cell **inside** that square. The printed tile then moves left one cell per estimated beat (0.42 seconds without a reliable tempo), clipped at the square boundary. Seeking to the same time reproduces the same selection and displacement. Fresh hits overprint older ink. The strong attack releases over 300 ms, but faint ink continues moving until it exits. The default is 10 FPS. Tempo sets transport speed; no metronome-only hits are generated.
 
-Drum-only features drive the tiles; the other stem drives perimeter fragments, rings, pen and eraser traces. BPM remains a global estimate, not a replacement for detected attacks. Instrument labels are spectral heuristics, not a trained drum transcription model.
+In the earlier revision, drum-only features drove the tiles and the other stem drove perimeter fragments, rings, pen and eraser traces; see current routing above. BPM remains a global estimate, not a replacement for detected attacks. Instrument labels are spectral heuristics, not a trained drum transcription model.
 
 Scroll consistency review: per-hit age-based coordinates created different subcell phases and per-tile rounding, allowing partially overlapping tiles and unequal pixel steps. Attacks now choose cells on a shared moving lattice. Transport is rounded once per frame; cells stay exactly 15 logical pixels apart and move identical distances. Re-strikes replace the same world-grid cell rather than stacking textures. Tests cover off-beat attacks at 80, 127, 149.75 and 180 BPM. Integer-pixel rendering at 10 FPS necessarily alternates whole-pixel step sizes at fractional speeds, but that step is now identical for every tile.
 

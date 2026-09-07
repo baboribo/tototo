@@ -1,33 +1,45 @@
 # Terrace — sound in ink
 
-Local audio motion graphics inspired by the visual geometry of テラス席. Files stay on the device. Vite + TypeScript + Web Audio decoding + a Web Worker + low-resolution Canvas 2D; no React runtime is needed for the single canvas and small control surface.
+오디오 파일을 기기 안에서 분석해 중앙 타일, 움직이는 분절 테두리, 드럼 잉크를 그리는 웹앱입니다. TypeScript + Vite + Web Audio + Web Worker + Canvas 2D를 사용합니다.
 
-Run `npm install`, then `npm run dev`. Open the local address printed by Vite. Select or drop an audio file, wait for analysis, then press Play. The rhythm sample is original procedural audio; the test sound isolates low/mid/high/silence. Appearance settings contain sensitivity and optional user-authored vertical text.
+## 실행
 
-`npm run build` generates `dist/`. The old `src/score.ts` is a historical, unused file; it is not imported and its supposed reference cues/lyrics do not drive this application.
+Node.js 20.19+ 또는 22.12+가 필요합니다. 잠금 파일에 맞춰 설치합니다.
 
-## Audio and motion
+```sh
+npm ci
+npm run dev
+```
 
-The file signature is inspected so missing MIME or incorrect extensions do not reject valid audio. The browser must still support the codec. Audio decoding and 50 Hz windowed FFT analysis generate five band energies, RMS and transient strength. Analysis uses the more energetic stereo channel to avoid cancellation; the native player plays the original full stereo audio. This is frequency analysis, not instrument separation or vocal extraction.
+표시된 로컬 주소를 열고 **리듬 샘플 → 재생**으로 바로 확인할 수 있습니다. 파일 선택과 드래그 앤 드롭도 지원합니다.
 
-`src/signal.ts` is the offline analysis and feature lookup. `src/motion.ts` maps features and audio time to a deterministic frame plan and raster drawing. `src/main.ts` owns file loading, analysis cancellation and playback. The worker keeps FFT work off the interface thread. Loading a new file invalidates and cancels previous work.
+```sh
+npm test
+npm run build
+```
 
-Fixed geometry: 320×240 raster, 60×60 center, 15×15 printed blocks, separate perimeter ribbons, anchored nib/eraser, faster right-to-left ink history. Same audio + same time + same sensitivity produce the same frame, independent of seek history and display refresh rate. Optional caption text does not affect analysis. The observed source geometry and inferred audio mappings are documented in `REFERENCE-STUDY.md`.
+검증은 매번 현재 소스를 새로 번들링합니다. 빌드는 `dist/`에 생성됩니다. `node_modules/`, `dist/`, `.verification/`, `*.tsbuildinfo`는 생성물이므로 Git에 포함하지 않습니다. 기존 저장소의 Windows 전용 의존성은 Git 추적에서 제외했으며, 각 컴퓨터에서 `npm ci`로 설치합니다.
 
-## Verification
+## 소리에서 화면까지
 
-`node --experimental-strip-types verify-audio.mjs` checks audio signatures and produces local fixtures for browser file-picker testing.
+1. **분리·분석**: 한 파일은 HPSS로 타악 성분과 나머지를 근사 분리합니다. 정확한 스템이 있다면 동일한 시작 시점의 두 파일을 직접 입력할 수 있습니다. 분석은 50 Hz이며, 중앙 타일과 펜은 드럼 타격 목록을 공유합니다.
+2. **중앙 타일**: 감지된 타격이 고정된 4×4 영역에 타일을 찍습니다. 타일은 같은 격자 위에서 왼쪽으로 이동합니다. BPM은 타일 이동 속도를 정하며 가짜 타격을 만들지 않습니다.
+3. **바깥 테두리**: 사각 경로를 따라 짧은 조각들이 이동하고 모서리에서 꺾입니다. 음역별 세기·어택이 조각의 표시 여부, 길이, 검정/점무늬 상태를 결정합니다. 큰 소리가 지속되어도 분절 사이의 빈틈은 남습니다. 화면 설정에서 드럼 + 나머지 / 드럼 / 나머지를 선택할 수 있습니다.
+4. **펜·지우개**: 실제 드럼 타격마다 자국을 찍습니다. 킥·탐은 굵은 자국, 스네어는 짧은 획, 하이햇은 작은 점, 심벌은 넓은 자국으로 해석합니다. 자국은 왼쪽으로 이동하며 모양을 유지하고, 지우개는 같은 자국이 도착했을 때 반응합니다. 드럼 EQ 설정이 타일과 펜에 함께 적용됩니다.
 
-`npx esbuild verify-motion.ts --bundle --platform=node --format=esm --outfile=.verification/verify-motion.mjs` followed by `node .verification/verify-motion.mjs` checks band separation with five isolated tones, silence, valid numerical output, identical plans after seeking, leftward movement while cell patterns stay fixed, and finite ink tails. These tests check motion rules, not similarity of a static screenshot alone.
+기본 화면은 10 FPS로 잠깐씩 멈춘 프레임을 보여주지만 오디오 재생은 연속입니다. 짧은 분석 피크를 보존하며, 일시정지·시점 이동·화면 갱신 빈도와 무관하게 같은 시점은 같은 화면을 만듭니다. 단일 파일 전체 듣기는 원본 스테레오를 유지하고, 두 스템 합산은 6 dB 여유를 둡니다.
 
-Source playback was sampled throughout its duration and stepped frame-by-frame at selected transitions; not every video frame has been inspected. Exact original audio-to-graphics mappings are unknown. The implemented mappings are explicit interpretations of the observed layers, driven by the user's audio rather than a preset soundtrack timeline.
+## 핵심 파일
 
-## Frame rate and beat sync
+- `src/reactive-ink.ts`: 테두리 이동·분절·오디오 반응, 드럼 자국과 지우개 도착 계산.
+- `src/motion.ts`: 타일 계획, 10 FPS 시간 양자화, 픽셀 렌더링.
+- `src/signal.ts`, `src/separation.ts`, `src/analysis.worker.ts`: 음원 분리와 FFT 분석.
+- `src/drum-eq.ts`, `src/drum-panel.ts`: 드럼 타격 검출과 조절 UI.
+- `src/main.ts`: 파일 로딩, 취소, 재생, 시점 이동, 스템 연결.
+- `verify-reactive-ink.ts`: 이동, 모서리 통과, 소리별 반응, 타격 누락, 펜·지우개, 결정적 시점 이동 검증.
 
-Default motion cadence is 10 FPS (100 ms held frames), following the user's observation; source encoding FPS has not been measured. Audio playback remains continuous at its original speed. All canvas geometry and texture phases use the same quantized audio clock. The 50 Hz analysis retains peaks between visual frames.
+`src/score.ts`는 사용하지 않는 과거 파일이며 앱에 import되지 않습니다.
 
-`src/tempo.ts` estimates a global BPM (65–190 automatic range) and beat offset using onset/low-band novelty, fractional-lag autocorrelation, and phase scoring. The displayed confidence is a periodicity score, not a calibrated probability. Ambiguous/non-periodic audio falls back to actual onset reactions. This is global tempo estimation, not time-varying tempo tracking, meter/downbeat detection, or instrument separation.
+## 참고와 한계
 
-Detected beats set the central column sampling period/phase. Current beats and transient peaks briefly switch existing tile ink between solid and stipple; geometry remains unchanged. Beat emphasis can be set to zero. FPS, BPM override, half/double interpretation, and phase offset can be adjusted without changing the sound. A new file resets tempo overrides to automatic.
-
-Tempo verification covers 80/100/120/127/150/180 BPM fixtures and phase recovery, silence fallback, frame holding, and tone changes on the beat while retaining tile positions. The original rhythmic demo (150 BPM) is also checked through the browser decoder and analysis worker.
+참고 영상 관찰 및 구현 가설은 `REFERENCE-STUDY.md`, 스템 동작은 `STEM-MOTION.md`, 저장소 점검은 `REPOSITORY-AUDIT.md`에 기록했습니다. 영상의 실제 제작 알고리즘·드럼 스템 사용 여부는 확인할 수 없습니다. 화면을 재생하는 타임라인이 아니라 입력한 오디오에 반응하는 규칙을 구현합니다. HPSS와 악기 분류는 근사치라 보컬·피아노 어택이 드럼으로 감지될 수 있습니다.
