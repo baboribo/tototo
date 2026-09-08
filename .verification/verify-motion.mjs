@@ -157,16 +157,6 @@ function recentHits(hits, time, tail = 0.32, limit = 20) {
   for (let i = lo - 1; i >= 0 && hits[i].time > time - tail && result.length < limit; i--) result.push(hits[i]);
   return result;
 }
-function hitPosition(hit) {
-  let seed = hit.seed;
-  const random = () => {
-    seed ^= seed << 13;
-    seed ^= seed >>> 17;
-    seed ^= seed << 5;
-    return (seed >>> 0) / 4294967296;
-  };
-  return { x: 130 + Math.floor(random() * 4) * 15, y: 90 + Math.floor(random() * 4) * 15 };
-}
 
 // src/reactive-ink.ts
 var clamp = (v) => Math.max(0, Math.min(1, v));
@@ -250,6 +240,82 @@ var valueAt = (signal2, time, gain) => {
   const value = at(signal2, time);
   return { ...value, bands: value.bands.map((v) => clamp2(v * gain)), level: clamp2(value.level * gain) };
 };
+var tileBindings = [
+  { source: "other", band: 3, threshold: 0.24, fadeScale: 0.8 },
+  { source: "drums", kind: "hat" },
+  { source: "other", band: 2, threshold: 0.2, fadeScale: 1.1 },
+  { source: "drums", kind: "snare" },
+  { source: "drums", kind: "kick" },
+  { source: "other", band: 1, threshold: 0.22, fadeScale: 1 },
+  { source: "other", band: 3, threshold: 0.3, fadeScale: 1.25 },
+  { source: "drums", kind: "tom" },
+  { source: "other", band: 0, threshold: 0.2, fadeScale: 1.2 },
+  { source: "drums", kind: "kick" },
+  { source: "other", band: 4, threshold: 0.2, fadeScale: 0.75 },
+  { source: "drums", kind: "hat" },
+  { source: "drums", kind: "cymbal" },
+  { source: "other", band: 2, threshold: 0.28, fadeScale: 0.9 },
+  { source: "drums", kind: "snare" },
+  { source: "other", band: 0, threshold: 0.3, fadeScale: 1.35 }
+];
+var smoothstep = (value) => {
+  value = clamp2(value);
+  return value * value * (3 - 2 * value);
+};
+function smoothedBand(signal2, time, band, gain, duration) {
+  if (!signal2 || time < 0) return 0;
+  const step = 1 / signal2.rate;
+  const attack = Math.max(step, duration);
+  const release = Math.max(step, duration * 1.6);
+  const start = Math.max(0, time - Math.max(0.5, release * 4));
+  let envelope = 0;
+  for (let sampleTime = start; sampleTime <= time + step / 2; sampleTime += step) {
+    const frame = Math.min(Math.floor(sampleTime * signal2.rate), signal2.values.length / STRIDE - 1);
+    const target = clamp2((signal2.values[frame * STRIDE + band] ?? 0) * gain);
+    const tau = target > envelope ? attack : release;
+    envelope += (target - envelope) * (1 - Math.exp(-step / tau));
+  }
+  return clamp2(envelope);
+}
+function kickGate(hits, time, gain, impact, fade) {
+  const hold = 0.06;
+  let gate = 1;
+  for (const hit of recentHits(hits, time, hold + fade, Infinity)) {
+    if (hit.kind !== "kick") continue;
+    const drive = clamp2(hit.strength * gain * (0.5 + impact));
+    const depth = clamp2((drive - 0.55) / 0.35);
+    if (!depth) continue;
+    const age = time - hit.time;
+    const recovery = age <= hold ? 0 : smoothstep((age - hold) / fade);
+    gate = Math.min(gate, 1 - depth * (1 - recovery));
+  }
+  return gate;
+}
+function assignedTiles(other, hits, time, gain, impact, fade) {
+  const tiles = [];
+  const otherGate = kickGate(hits, time, gain, impact, fade);
+  const recent = recentHits(hits, time, fade + 0.12, Infinity);
+  tileBindings.forEach((binding, index) => {
+    const x = 130 + index % 4 * 15;
+    const y = 90 + Math.floor(index / 4) * 15;
+    if (binding.source === "other") {
+      const level = smoothedBand(other, time, binding.band, gain, fade * binding.fadeScale);
+      const amount2 = smoothstep((level - binding.threshold) / Math.max(0.05, 0.82 - binding.threshold));
+      const opacity = amount2 * otherGate;
+      if (opacity > 0.025) tiles.push({ x, y, tone: amount2 > 0.72 ? 3 : amount2 > 0.34 ? 2 : 1, opacity: Number(opacity.toFixed(3)), source: "other" });
+      return;
+    }
+    let amount = 0;
+    for (const hit of recent) {
+      if (hit.kind !== binding.kind) continue;
+      const age = time - hit.time;
+      const envelope = age <= 0.08 ? 1 : smoothstep(1 - (age - 0.08) / fade);
+      amount = Math.max(amount, clamp2(hit.strength * gain * (0.5 + impact)) * envelope);
+    }
+    if (amount > 0.025) tiles.push({ x, y, tone: amount > 0.68 ? 3 : amount > 0.3 ? 2 : 1, opacity: Number(amount.toFixed(3)), source: "drums" });
+  });
+  return tiles;
+}
 function planFrame(signal2, time, gain = 1, options = {}) {
   const fps = options.fps ?? 10;
   time = frameTime(time, fps);
@@ -265,6 +331,7 @@ function planFrame(signal2, time, gain = 1, options = {}) {
   const otherNow = valueAt(other, time, gain);
   const beat = beatPulse(options.tempo === void 0 ? signal2?.tempo : options.tempo, time, Math.max(1 / fps, 0.09));
   const impact = options.impact ?? 1;
+  const tileFade = Math.max(0.05, options.tileFade ?? 0.3);
   const hit = active ? clamp2(Math.max(now.onset * 1.8, beat.pulse * 0.85) * impact) : 0;
   const plan = { tiles: [], bars: [], trace: [], rings: 0, pen: 0, eraser: 0, active };
   const tempo = options.tempo === void 0 ? signal2?.tempo : options.tempo;
@@ -289,21 +356,7 @@ function planFrame(signal2, time, gain = 1, options = {}) {
     }
   }
   if (options.hits) {
-    plan.tiles = [];
-    const transport = Math.round((time - origin) * speed);
-    const cells = /* @__PURE__ */ new Map();
-    for (const event of recentHits(options.hits, time, 75 / speed, Infinity).reverse()) {
-      const position = hitPosition(event);
-      const age = time - event.time;
-      const column = Math.floor((event.time - origin) / period + 1e-8) + (position.x - 130) / 15;
-      const x = 130 + column * 15 - transport;
-      if (x + 15 <= 130) continue;
-      const envelope = age < 0.1 ? 1 : age < 0.2 ? event.kind === "kick" || event.kind === "tom" ? 0.8 : 0.5 : 0.15;
-      const intensity = clamp2(event.strength * gain * (0.5 + impact) * envelope);
-      const tone2 = intensity > 0.65 ? 3 : intensity > 0.3 ? 2 : 1;
-      cells.set(`${column},${position.y}`, { x, y: position.y, tone: tone2 });
-    }
-    plan.tiles = [...cells.values()];
+    plan.tiles = assignedTiles(other, options.hits, time, gain, impact, tileFade);
     plan.active = plan.tiles.length > 0 || otherNow.level > 0.045;
   }
   const border = perimeter(signal2, other, time, gain, Math.max(1 / fps, 0.08), options.perimeterSource, impact);

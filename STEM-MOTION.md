@@ -2,7 +2,7 @@
 
 ## Current routing (2026-09-07)
 
-Detected drum hits now drive both the central tiles and the pen. The EQ channel enable, bands and thresholds update both. The perimeter defaults to features from drums plus remainder, with a source selector in the appearance settings. Its segmented pieces move along the square, while signal energy and attacks control their ink. The eraser follows the arrival of the same written mark, about 1.244 seconds later. Historical non-drum pen descriptions below are superseded.
+The central 4×4 area now combines both analysed stems through fixed pad assignments. A subset of pads follows frequency bands in the non-drum stem and can remain visibly pressed; the remaining pads are reused by fixed drum families. A sufficiently strong kick ducks the held non-drum pads, after which they return over the adjustable tile-fade duration. Drum EQ channel enable, bands and thresholds still update drum pads and pen marks together. The perimeter defaults to features from drums plus remainder, with a source selector in the appearance settings. Its segmented pieces move along the square, while signal energy and attacks control their ink. The eraser follows the arrival of the same written mark, about 1.244 seconds later. Historical random drum-tile and non-drum pen descriptions below are superseded.
 
 
 ## Drum frequency control panel
@@ -15,7 +15,7 @@ Selected-band audition uses the actual drum PCM through Web Audio highpass/lowpa
 
 Validation: verify-drum-eq.ts tests spectral data, band changes, enable, thresholds, retrigger and silence. Browser sample test changed KICK level threshold from 0.16 to 1.5 and total hits changed from 503 to 445; reset restored 503. Solo activation, play/pause and return to normal playback were exercised. Existing stem and motion tests and production build passed.
 
-The central 4×4 square stays in place. Each detected drum attack selects a seeded random cell **inside** that square. The printed tile then moves left one cell per estimated beat (0.42 seconds without a reliable tempo), clipped at the square boundary. Seeking to the same time reproduces the same selection and displacement. Fresh hits overprint older ink. The strong attack releases over 300 ms, but faint ink continues moving until it exits. The default is 10 FPS. Tempo sets transport speed; no metronome-only hits are generated.
+The central 4×4 square stays in place. The current fixed stem assignments, kick ducking and fade behavior are described in **Current routing** above. The earlier seeded-random cell selection and beat-driven left transport are no longer used by the app. Seeking to the same time still reproduces the same tile state, the default remains 10 FPS, and tempo alone does not generate drum pads.
 
 In the earlier revision, drum-only features drove the tiles and the other stem drove perimeter fragments, rings, pen and eraser traces; see current routing above. BPM remains a global estimate, not a replacement for detected attacks. Instrument labels are spectral heuristics, not a trained drum transcription model.
 

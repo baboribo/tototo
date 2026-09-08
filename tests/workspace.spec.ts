@@ -93,6 +93,10 @@ test('tabs preserve audio, canvas and controls; playback, seek and settings stay
   await sensitivity.focus();
   await page.keyboard.press('ArrowRight');
   await expect(page.locator('#sensitivity')).toHaveValue('1.05');
+  const tileFade = page.getByRole('slider',{name:'타일 페이드'});
+  await tileFade.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#tile-fade')).toHaveValue('0.35');
   expect(await page.locator('#audio').evaluate((node:HTMLAudioElement) => node.currentTime)).toBeCloseTo(5,1);
   await page.locator('#bpm').fill('120');
   await expect(page.locator('#tempo-readout')).toHaveText('120 BPM');

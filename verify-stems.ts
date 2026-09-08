@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {separate} from './src/separation';
-import {detectDrums,hitPosition,type DrumHit} from './src/drums';
+import {detectDrums,type DrumHit} from './src/drums';
 import {planFrame,frameTime} from './src/motion';
 import {type Signal,STRIDE} from './src/signal';
 
@@ -18,36 +18,33 @@ assert.ok(detectDrums(steady).length<=1,'sustained tone must not repeatedly trig
 const pulses:Signal={...silence,values:new Float32Array(silence.values.length)};
 for(const [frame,band] of [[10,0],[25,2],[40,3]])pulses.values[frame*STRIDE+band]=0.9;
 assert.deepEqual(detectDrums(pulses).map(h=>h.kind),['kick','snare','hat']);
-const hits:DrumHit[]=Array.from({length:100},(_,i)=>({time:i/10,kind:'kick',strength:1,seed:((i+1)*2654435761)>>>0}));
-const cells=new Set<string>();
-for(const h of hits){const p=hitPosition(h);assert.ok(p.x>=130&&p.x<=175&&p.y>=90&&p.y<=135);assert.equal((p.x-130)%15,0);assert.equal((p.y-90)%15,0);assert.deepEqual(p,hitPosition(h));cells.add(`${p.x},${p.y}`);}
-assert.ok(cells.size>=12,'random hits distributed throughout central grid');
-const options={hits:[{...hits[0],time:0.2}],otherSignal:silence,fps:10};
-const attack=planFrame(pulses,0.21,1,options);
-assert.equal(attack.tiles.length,1);assert.ok(attack.trace.length>0,'drum attacks write pen ink even with silent non-drum stem');
-assert.deepEqual(attack,planFrame(pulses,0.29,1,options),'10 FPS frame hold');
-const moved=planFrame(pulses,0.4,1,options);
-assert.equal(moved.tiles.length,1);
-assert.ok(moved.tiles[0].x<attack.tiles[0].x,'drum ink must move left across frames');
-assert.equal(moved.tiles[0].y,attack.tiles[0].y,'row remains fixed');
-assert.equal(planFrame(pulses,2,1,options).tiles.length,0,'ink clears after exiting central square');
-const rightHit=hits.find(h=>hitPosition(h).x===175)!;
-const scrolling={...options,hits:[{...rightHit,time:0.2}],tempo:{bpm:120,offset:0.2,confidence:1}};
-assert.equal(planFrame(pulses,0.7,1,scrolling).tiles[0].x,160,'one cell of travel per beat');
-assert.equal(planFrame(pulses,2.1,1,scrolling).tiles[0].x,118,'partially visible tile survives at left clip boundary');
-assert.equal(planFrame(pulses,2.2,1,scrolling).tiles.length,0,'fully clipped tile removed');
-assert.deepEqual(planFrame(pulses,0.7,1,scrolling),planFrame(pulses,0.7,1,scrolling),'seek is deterministic');
-// Off-grid attacks used to create overlapping, differently rounded scroll phases.
-const middleHit=hits.find(h=>hitPosition(h).x===160&&hitPosition(h).y===hitPosition(rightHit).y)!;
-assert.ok(middleHit);
-for(const bpm of [80,127,149.75,180]) {
-  const shared={...options,tempo:{bpm,offset:0,confidence:1},hits:[{...rightHit,time:0.013},{...middleHit,time:0.087}]};
-  const a=planFrame(pulses,0.1,1,shared).tiles,b=planFrame(pulses,0.2,1,shared).tiles;
-  assert.equal(a.length,2);assert.equal(b.length,2);
-  assert.equal(a[0].x-a[1].x,15,'off-beat hits share exact grid spacing');
-  assert.equal(a[0].x-b[0].x,a[1].x-b[1].x,'every tile moves the same pixels per frame');
-  const repeated={...shared,hits:[{...rightHit,time:0.013},{...rightHit,time:0.087}]};
-  assert.equal(planFrame(pulses,0.1,1,repeated).tiles.length,1,'same moving cell is re-struck, not layered');
+const other:Signal={...silence,values:new Float32Array(silence.values.length)};
+for(let frame=0;frame<other.values.length/STRIDE;frame++){
+  for(let band=0;band<5;band++)other.values[frame*STRIDE+band]=0.9;
+  other.values[frame*STRIDE+5]=0.8;
 }
-assert.equal(planFrame(pulses,0.2,1,{hits:[],otherSignal:pulses,tempo:{bpm:150,offset:0,confidence:1}}).tiles.length,0,'metronome must not invent drum hits');
-console.log(`PASS: complementary separation, silence, attacks, ${cells.size}/16 central cells, frame hold, leftward drum transport, boundary exit and stem isolation`);
+const baseOptions={hits:[] as DrumHit[],otherSignal:other,fps:10,tileFade:0.3};
+const base=planFrame(pulses,0.9,1,baseOptions);
+assert.ok(base.tiles.length>=6,'the non-drum stem holds its assigned tiles');
+assert.ok(base.tiles.every(tile=>tile.source==='other'),'an empty hit list cannot invent drum tiles');
+assert.ok(base.tiles.every(tile=>tile.x>=130&&tile.x<=175&&tile.y>=90&&tile.y<=135),'assigned tiles remain in the fixed 4x4 grid');
+
+const kick:DrumHit={time:1,kind:'kick',strength:1,seed:1};
+const options={...baseOptions,hits:[kick]};
+const attack=planFrame(pulses,1.01,1,options);
+assert.ok(attack.tiles.some(tile=>tile.source==='drums'),'a kick lights its assigned pads');
+assert.equal(attack.tiles.filter(tile=>tile.source==='other').length,0,'a strong kick switches the held non-drum pads off');
+assert.deepEqual(attack.tiles.filter(tile=>tile.source==='drums').map(tile=>[tile.x,tile.y]),[[130,105],[145,120]],'kick reuses fixed assigned pads');
+assert.ok(attack.trace.length>0,'drum attacks still write pen ink');
+assert.deepEqual(attack,planFrame(pulses,1.099,1,options),'10 FPS frame hold');
+
+const recovering=planFrame(pulses,1.2,1,options).tiles.filter(tile=>tile.source==='other');
+assert.ok(recovering.length>0&&recovering.every(tile=>(tile.opacity??1)<1),'held pads fade back after the kick blackout');
+const fast=planFrame(pulses,1.3,1,{...options,tileFade:0.1}).tiles.filter(tile=>tile.source==='other').reduce((sum,tile)=>sum+(tile.opacity??1),0);
+const slow=planFrame(pulses,1.3,1,{...options,tileFade:0.6}).tiles.filter(tile=>tile.source==='other').reduce((sum,tile)=>sum+(tile.opacity??1),0);
+assert.ok(fast>slow,'tile fade duration controls recovery speed');
+assert.deepEqual(planFrame(pulses,1.2,1,options),planFrame(pulses,1.2,1,options),'seek is deterministic');
+
+const metronome=planFrame(pulses,0.9,1,{hits:[],otherSignal:other,tempo:{bpm:150,offset:0,confidence:1}});
+assert.ok(metronome.tiles.length>0&&metronome.tiles.every(tile=>tile.source==='other'),'tempo can time motion but cannot invent drum pads');
+console.log('PASS: complementary separation, silence, attacks, fixed stem-assigned tiles, kick ducking, fade recovery, frame hold and deterministic seeking');

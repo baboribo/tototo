@@ -1,19 +1,96 @@
-import { at, type Signal } from './signal';
+import { at, STRIDE, type Signal } from './signal';
 import { beatPulse, type Tempo } from './tempo';
-import { recentHits, hitPosition, type DrumHit } from './drums';
+import { recentHits, type DrumHit, type DrumKind } from './drums';
 import { perimeter, drumInk, type InkBar, type InkMark, type PerimeterSource } from './reactive-ink';
 
-export type MotionOptions = { fps?: number; impact?: number; tempo?: Tempo | null; hits?: DrumHit[]; otherSignal?: Signal; perimeterSource?: PerimeterSource };
+export type MotionOptions = { fps?: number; impact?: number; tileFade?: number; tempo?: Tempo | null; hits?: DrumHit[]; otherSignal?: Signal; perimeterSource?: PerimeterSource };
 // Browser range/media values may land fractions of a microsecond below a frame.
 export const frameTime = (time: number, fps = 10) => Math.floor((Math.max(0, time) + 1e-6) * fps) / fps;
 
-export type Tile = { x: number; y: number; tone: number };
+export type Tile = { x: number; y: number; tone: number; opacity?: number; source?: 'drums' | 'other' };
 export type FramePlan = { tiles: Tile[]; bars: InkBar[]; trace: InkMark[]; rings: number; pen: number; eraser: number; active: boolean };
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 const valueAt = (signal: Signal | undefined, time: number, gain: number) => {
   const value = at(signal, time);
   return { ...value, bands: value.bands.map(v => clamp(v * gain)), level: clamp(value.level * gain) };
 };
+
+type TileBinding =
+  | { source: 'other'; band: number; threshold: number; fadeScale: number }
+  | { source: 'drums'; kind: DrumKind };
+
+// Fixed 4x4 routing. The reference reads more like a bank of assigned pads than
+// a random hit printer: sustained musical material holds the "other" pads while
+// each percussion family reuses its own locations.
+const tileBindings: TileBinding[] = [
+  { source: 'other', band: 3, threshold: 0.24, fadeScale: 0.8 }, { source: 'drums', kind: 'hat' },   { source: 'other', band: 2, threshold: 0.2, fadeScale: 1.1 }, { source: 'drums', kind: 'snare' },
+  { source: 'drums', kind: 'kick' },   { source: 'other', band: 1, threshold: 0.22, fadeScale: 1 }, { source: 'other', band: 3, threshold: 0.3, fadeScale: 1.25 }, { source: 'drums', kind: 'tom' },
+  { source: 'other', band: 0, threshold: 0.2, fadeScale: 1.2 }, { source: 'drums', kind: 'kick' },   { source: 'other', band: 4, threshold: 0.2, fadeScale: 0.75 }, { source: 'drums', kind: 'hat' },
+  { source: 'drums', kind: 'cymbal' }, { source: 'other', band: 2, threshold: 0.28, fadeScale: 0.9 }, { source: 'drums', kind: 'snare' }, { source: 'other', band: 0, threshold: 0.3, fadeScale: 1.35 },
+];
+
+const smoothstep = (value: number) => {
+  value = clamp(value);
+  return value * value * (3 - 2 * value);
+};
+
+/** Rebuild a causal attack/release envelope from analysis history. */
+function smoothedBand(signal: Signal | undefined, time: number, band: number, gain: number, duration: number) {
+  if (!signal || time < 0) return 0;
+  const step = 1 / signal.rate;
+  const attack = Math.max(step, duration);
+  const release = Math.max(step, duration * 1.6);
+  const start = Math.max(0, time - Math.max(0.5, release * 4));
+  let envelope = 0;
+  for (let sampleTime = start; sampleTime <= time + step / 2; sampleTime += step) {
+    const frame = Math.min(Math.floor(sampleTime * signal.rate), signal.values.length / STRIDE - 1);
+    const target = clamp((signal.values[frame * STRIDE + band] ?? 0) * gain);
+    const tau = target > envelope ? attack : release;
+    envelope += (target - envelope) * (1 - Math.exp(-step / tau));
+  }
+  return clamp(envelope);
+}
+
+function kickGate(hits: DrumHit[], time: number, gain: number, impact: number, fade: number) {
+  const hold = 0.06;
+  let gate = 1;
+  for (const hit of recentHits(hits, time, hold + fade, Infinity)) {
+    if (hit.kind !== 'kick') continue;
+    const drive = clamp(hit.strength * gain * (0.5 + impact));
+    const depth = clamp((drive - 0.55) / 0.35);
+    if (!depth) continue;
+    const age = time - hit.time;
+    const recovery = age <= hold ? 0 : smoothstep((age - hold) / fade);
+    gate = Math.min(gate, 1 - depth * (1 - recovery));
+  }
+  return gate;
+}
+
+function assignedTiles(other: Signal | undefined, hits: DrumHit[], time: number, gain: number, impact: number, fade: number) {
+  const tiles: Tile[] = [];
+  const otherGate = kickGate(hits, time, gain, impact, fade);
+  const recent = recentHits(hits, time, fade + 0.12, Infinity);
+  tileBindings.forEach((binding, index) => {
+    const x = 130 + index % 4 * 15;
+    const y = 90 + Math.floor(index / 4) * 15;
+    if (binding.source === 'other') {
+      const level = smoothedBand(other, time, binding.band, gain, fade * binding.fadeScale);
+      const amount = smoothstep((level - binding.threshold) / Math.max(0.05, 0.82 - binding.threshold));
+      const opacity = amount * otherGate;
+      if (opacity > 0.025) tiles.push({ x, y, tone: amount > 0.72 ? 3 : amount > 0.34 ? 2 : 1, opacity: Number(opacity.toFixed(3)), source: 'other' });
+      return;
+    }
+    let amount = 0;
+    for (const hit of recent) {
+      if (hit.kind !== binding.kind) continue;
+      const age = time - hit.time;
+      const envelope = age <= 0.08 ? 1 : smoothstep(1 - (age - 0.08) / fade);
+      amount = Math.max(amount, clamp(hit.strength * gain * (0.5 + impact)) * envelope);
+    }
+    if (amount > 0.025) tiles.push({ x, y, tone: amount > 0.68 ? 3 : amount > 0.3 ? 2 : 1, opacity: Number(amount.toFixed(3)), source: 'drums' });
+  });
+  return tiles;
+}
 
 /** Pure time→geometry mapping: seeking and display refresh rate cannot alter it. */
 export function planFrame(signal: Signal | undefined, time: number, gain = 1, options: MotionOptions = {}): FramePlan {
@@ -32,6 +109,7 @@ export function planFrame(signal: Signal | undefined, time: number, gain = 1, op
   const otherNow = valueAt(other,time,gain);
   const beat = beatPulse(options.tempo === undefined ? signal?.tempo : options.tempo, time, Math.max(1 / fps, 0.09));
   const impact = options.impact ?? 1;
+  const tileFade = Math.max(0.05, options.tileFade ?? 0.3);
   const hit = active ? clamp(Math.max(now.onset * 1.8, beat.pulse * 0.85) * impact) : 0;
   const plan: FramePlan = { tiles: [], bars: [], trace: [], rings: 0, pen: 0, eraser: 0, active };
   // Past samples carry the printed pattern; present beat/onsets overprint selected
@@ -58,25 +136,7 @@ export function planFrame(signal: Signal | undefined, time: number, gain = 1, op
     }
   }
   if(options.hits) {
-    plan.tiles=[];
-    // One shared moving grid: attacks select cells, never start new scroll
-    // phases. Round the transport once so every cell moves the same pixels.
-    const transport=Math.round((time-origin)*speed);
-    const cells=new Map<string,Tile>();
-    for(const event of recentHits(options.hits,time,75/speed,Infinity).reverse()) {
-      const position=hitPosition(event);
-      const age=time-event.time;
-      const column=Math.floor((event.time-origin)/period+1e-8)+(position.x-130)/15;
-      const x=130+column*15-transport;
-      if(x+15<=130)continue;
-      const envelope=age<0.1?1:age<0.2?(event.kind==='kick'||event.kind==='tom'?0.8:0.5):0.15;
-      const intensity=clamp(event.strength*gain*(0.5+impact)*envelope);
-      const tone=intensity>0.65?3:intensity>0.3?2:1;
-      // Repeated attacks re-strike the same moving cell instead of stacking
-      // independently phased textures and making its width appear to change.
-      cells.set(`${column},${position.y}`,{x,y:position.y,tone});
-    }
-    plan.tiles=[...cells.values()];
+    plan.tiles = assignedTiles(other, options.hits, time, gain, impact, tileFade);
     plan.active=plan.tiles.length>0||otherNow.level>0.045;
   }
   const border = perimeter(signal, other, time, gain, Math.max(1 / fps, 0.08), options.perimeterSource, impact);
@@ -131,7 +191,11 @@ export class MotionRenderer {
     this.rect(0, 0, 320, 240, this.paper);
     if (plan.active || !signal || time === 0) {
       ctx.save(); ctx.beginPath(); ctx.rect(130, 90, 60, 60); ctx.clip();
-      for (const tile of plan.tiles) this.texture(tile.x, tile.y, 15, 15, tile.tone);
+      for (const tile of plan.tiles) {
+        ctx.save(); ctx.globalAlpha = tile.opacity ?? 1;
+        this.texture(tile.x, tile.y, 15, 15, tile.tone);
+        ctx.restore();
+      }
       ctx.restore(); this.dottedBox(130, 90, 60);
       for (let ring = 0; ring < plan.rings; ring++) this.dottedBox(127 - ring * 3, 87 - ring * 3, 66 + ring * 6);
       if (plan.rings === 3) { this.dottedBox(125, 85, 70); this.dottedBox(123, 83, 74); }

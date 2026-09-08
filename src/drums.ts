@@ -33,10 +33,3 @@ export function recentHits(hits:DrumHit[],time:number,tail=0.32,limit=20) {
   for(let i=lo-1;i>=0&&hits[i].time>time-tail&&result.length<limit;i--)result.push(hits[i]);
   return result;
 }
-
-export function hitPosition(hit:DrumHit) {
-  let seed=hit.seed;
-  const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0)/4294967296;};
-  // The reference's central 4×4 grid is fixed; only the selected cell is random.
-  return {x:130+Math.floor(random()*4)*15,y:90+Math.floor(random()*4)*15};
-}

@@ -105,7 +105,7 @@ function at(signal, seconds) {
 
 // src/drums.ts
 function detectDrums(signal) {
-  const hits2 = [], last = [-1, -1, -1, -1, -1], baseline = [0, 0, 0, 0, 0];
+  const hits = [], last = [-1, -1, -1, -1, -1], baseline = [0, 0, 0, 0, 0];
   const kinds = ["kick", "tom", "snare", "hat", "cymbal"];
   for (let frame = 1; frame < signal.values.length / STRIDE; frame++) {
     const p = frame * STRIDE, time = frame / signal.rate;
@@ -120,31 +120,21 @@ function detectDrums(signal) {
       if (b === 1 && bands[0] > bands[1] * 1.3) continue;
       if (b === 4 && bands[4] < bands[3] * 0.95) continue;
       last[b] = time;
-      hits2.push({ time, kind: kinds[b], strength: Math.min(1, rise * 2.5), seed: Math.round(time * 1e3) * 2654435761 + b * 1013904223 >>> 0 });
+      hits.push({ time, kind: kinds[b], strength: Math.min(1, rise * 2.5), seed: Math.round(time * 1e3) * 2654435761 + b * 1013904223 >>> 0 });
     }
   }
-  return hits2.sort((a, b) => a.time - b.time);
+  return hits.sort((a, b) => a.time - b.time);
 }
-function recentHits(hits2, time, tail = 0.32, limit = 20) {
-  let lo = 0, hi = hits2.length;
+function recentHits(hits, time, tail = 0.32, limit = 20) {
+  let lo = 0, hi = hits.length;
   while (lo < hi) {
     const mid = lo + hi >>> 1;
-    if (hits2[mid].time <= time) lo = mid + 1;
+    if (hits[mid].time <= time) lo = mid + 1;
     else hi = mid;
   }
   const result = [];
-  for (let i = lo - 1; i >= 0 && hits2[i].time > time - tail && result.length < limit; i--) result.push(hits2[i]);
+  for (let i = lo - 1; i >= 0 && hits[i].time > time - tail && result.length < limit; i--) result.push(hits[i]);
   return result;
-}
-function hitPosition(hit) {
-  let seed = hit.seed;
-  const random = () => {
-    seed ^= seed << 13;
-    seed ^= seed >>> 17;
-    seed ^= seed << 5;
-    return (seed >>> 0) / 4294967296;
-  };
-  return { x: 130 + Math.floor(random() * 4) * 15, y: 90 + Math.floor(random() * 4) * 15 };
 }
 
 // src/reactive-ink.ts
@@ -163,9 +153,9 @@ function peakFeature(signal, time, window) {
   return feature;
 }
 var PERIMETER_SPEED = 32;
-function perimeter(drums, other, time, gain, hold, source = "both", impact = 1) {
+function perimeter(drums, other2, time, gain, hold, source = "both", impact = 1) {
   const bars = [];
-  const primary = source === "drums" ? drums : other;
+  const primary = source === "drums" ? drums : other2;
   const now = peakFeature(primary, time, hold);
   const percussion = peakFeature(source === "both" ? drums : void 0, time, hold);
   const level = Math.max(now.level, percussion.level) * gain;
@@ -198,11 +188,11 @@ var TRACE_SPEED = 160;
 var TRACE_START = 262;
 var TRACE_END = 63;
 var travel = (TRACE_START - TRACE_END) / TRACE_SPEED;
-function drumInk(hits2, time, gain, hold) {
+function drumInk(hits, time, gain, hold) {
   const columns = /* @__PURE__ */ new Map();
   let pen = 0, eraser = 0;
   const transport = Math.round(time * TRACE_SPEED);
-  for (const hit of recentHits(hits2, time, travel + Math.max(hold, 0.15), Infinity)) {
+  for (const hit of recentHits(hits, time, travel + Math.max(hold, 0.15), Infinity)) {
     const age = time - hit.time, strength = clamp(hit.strength * gain);
     if (strength < 0.08) continue;
     const amplitude = hit.kind === "kick" || hit.kind === "tom" ? 3 : hit.kind === "snare" ? 2 : 1;
@@ -229,6 +219,82 @@ var valueAt = (signal, time, gain) => {
   const value = at(signal, time);
   return { ...value, bands: value.bands.map((v) => clamp2(v * gain)), level: clamp2(value.level * gain) };
 };
+var tileBindings = [
+  { source: "other", band: 3, threshold: 0.24, fadeScale: 0.8 },
+  { source: "drums", kind: "hat" },
+  { source: "other", band: 2, threshold: 0.2, fadeScale: 1.1 },
+  { source: "drums", kind: "snare" },
+  { source: "drums", kind: "kick" },
+  { source: "other", band: 1, threshold: 0.22, fadeScale: 1 },
+  { source: "other", band: 3, threshold: 0.3, fadeScale: 1.25 },
+  { source: "drums", kind: "tom" },
+  { source: "other", band: 0, threshold: 0.2, fadeScale: 1.2 },
+  { source: "drums", kind: "kick" },
+  { source: "other", band: 4, threshold: 0.2, fadeScale: 0.75 },
+  { source: "drums", kind: "hat" },
+  { source: "drums", kind: "cymbal" },
+  { source: "other", band: 2, threshold: 0.28, fadeScale: 0.9 },
+  { source: "drums", kind: "snare" },
+  { source: "other", band: 0, threshold: 0.3, fadeScale: 1.35 }
+];
+var smoothstep = (value) => {
+  value = clamp2(value);
+  return value * value * (3 - 2 * value);
+};
+function smoothedBand(signal, time, band, gain, duration) {
+  if (!signal || time < 0) return 0;
+  const step = 1 / signal.rate;
+  const attack2 = Math.max(step, duration);
+  const release = Math.max(step, duration * 1.6);
+  const start = Math.max(0, time - Math.max(0.5, release * 4));
+  let envelope = 0;
+  for (let sampleTime = start; sampleTime <= time + step / 2; sampleTime += step) {
+    const frame = Math.min(Math.floor(sampleTime * signal.rate), signal.values.length / STRIDE - 1);
+    const target = clamp2((signal.values[frame * STRIDE + band] ?? 0) * gain);
+    const tau = target > envelope ? attack2 : release;
+    envelope += (target - envelope) * (1 - Math.exp(-step / tau));
+  }
+  return clamp2(envelope);
+}
+function kickGate(hits, time, gain, impact, fade) {
+  const hold = 0.06;
+  let gate = 1;
+  for (const hit of recentHits(hits, time, hold + fade, Infinity)) {
+    if (hit.kind !== "kick") continue;
+    const drive = clamp2(hit.strength * gain * (0.5 + impact));
+    const depth = clamp2((drive - 0.55) / 0.35);
+    if (!depth) continue;
+    const age = time - hit.time;
+    const recovery = age <= hold ? 0 : smoothstep((age - hold) / fade);
+    gate = Math.min(gate, 1 - depth * (1 - recovery));
+  }
+  return gate;
+}
+function assignedTiles(other2, hits, time, gain, impact, fade) {
+  const tiles = [];
+  const otherGate = kickGate(hits, time, gain, impact, fade);
+  const recent = recentHits(hits, time, fade + 0.12, Infinity);
+  tileBindings.forEach((binding, index) => {
+    const x = 130 + index % 4 * 15;
+    const y = 90 + Math.floor(index / 4) * 15;
+    if (binding.source === "other") {
+      const level = smoothedBand(other2, time, binding.band, gain, fade * binding.fadeScale);
+      const amount2 = smoothstep((level - binding.threshold) / Math.max(0.05, 0.82 - binding.threshold));
+      const opacity = amount2 * otherGate;
+      if (opacity > 0.025) tiles.push({ x, y, tone: amount2 > 0.72 ? 3 : amount2 > 0.34 ? 2 : 1, opacity: Number(opacity.toFixed(3)), source: "other" });
+      return;
+    }
+    let amount = 0;
+    for (const hit of recent) {
+      if (hit.kind !== binding.kind) continue;
+      const age = time - hit.time;
+      const envelope = age <= 0.08 ? 1 : smoothstep(1 - (age - 0.08) / fade);
+      amount = Math.max(amount, clamp2(hit.strength * gain * (0.5 + impact)) * envelope);
+    }
+    if (amount > 0.025) tiles.push({ x, y, tone: amount > 0.68 ? 3 : amount > 0.3 ? 2 : 1, opacity: Number(amount.toFixed(3)), source: "drums" });
+  });
+  return tiles;
+}
 function planFrame(signal, time, gain = 1, options2 = {}) {
   const fps = options2.fps ?? 10;
   time = frameTime(time, fps);
@@ -240,10 +306,11 @@ function planFrame(signal, time, gain = 1, options2 = {}) {
     now.bands = now.bands.map((v, band) => Math.max(v, recent.bands[band]));
   }
   const active = now.level > 0.045;
-  const other = options2.otherSignal ?? signal;
-  const otherNow = valueAt(other, time, gain);
+  const other2 = options2.otherSignal ?? signal;
+  const otherNow = valueAt(other2, time, gain);
   const beat = beatPulse(options2.tempo === void 0 ? signal?.tempo : options2.tempo, time, Math.max(1 / fps, 0.09));
   const impact = options2.impact ?? 1;
+  const tileFade = Math.max(0.05, options2.tileFade ?? 0.3);
   const hit = active ? clamp2(Math.max(now.onset * 1.8, beat.pulse * 0.85) * impact) : 0;
   const plan = { tiles: [], bars: [], trace: [], rings: 0, pen: 0, eraser: 0, active };
   const tempo = options2.tempo === void 0 ? signal?.tempo : options2.tempo;
@@ -268,24 +335,10 @@ function planFrame(signal, time, gain = 1, options2 = {}) {
     }
   }
   if (options2.hits) {
-    plan.tiles = [];
-    const transport = Math.round((time - origin) * speed);
-    const cells2 = /* @__PURE__ */ new Map();
-    for (const event of recentHits(options2.hits, time, 75 / speed, Infinity).reverse()) {
-      const position = hitPosition(event);
-      const age = time - event.time;
-      const column = Math.floor((event.time - origin) / period + 1e-8) + (position.x - 130) / 15;
-      const x = 130 + column * 15 - transport;
-      if (x + 15 <= 130) continue;
-      const envelope = age < 0.1 ? 1 : age < 0.2 ? event.kind === "kick" || event.kind === "tom" ? 0.8 : 0.5 : 0.15;
-      const intensity = clamp2(event.strength * gain * (0.5 + impact) * envelope);
-      const tone = intensity > 0.65 ? 3 : intensity > 0.3 ? 2 : 1;
-      cells2.set(`${column},${position.y}`, { x, y: position.y, tone });
-    }
-    plan.tiles = [...cells2.values()];
+    plan.tiles = assignedTiles(other2, options2.hits, time, gain, impact, tileFade);
     plan.active = plan.tiles.length > 0 || otherNow.level > 0.045;
   }
-  const border = perimeter(signal, other, time, gain, Math.max(1 / fps, 0.08), options2.perimeterSource, impact);
+  const border = perimeter(signal, other2, time, gain, Math.max(1 / fps, 0.08), options2.perimeterSource, impact);
   plan.bars = border.bars;
   plan.rings = border.rings;
   plan.active ||= border.bars.length > 0 || border.rings > 0;
@@ -319,44 +372,30 @@ assert.ok(detectDrums(steady).length <= 1, "sustained tone must not repeatedly t
 var pulses = { ...silence, values: new Float32Array(silence.values.length) };
 for (const [frame, band] of [[10, 0], [25, 2], [40, 3]]) pulses.values[frame * STRIDE + band] = 0.9;
 assert.deepEqual(detectDrums(pulses).map((h) => h.kind), ["kick", "snare", "hat"]);
-var hits = Array.from({ length: 100 }, (_, i) => ({ time: i / 10, kind: "kick", strength: 1, seed: (i + 1) * 2654435761 >>> 0 }));
-var cells = /* @__PURE__ */ new Set();
-for (const h of hits) {
-  const p = hitPosition(h);
-  assert.ok(p.x >= 130 && p.x <= 175 && p.y >= 90 && p.y <= 135);
-  assert.equal((p.x - 130) % 15, 0);
-  assert.equal((p.y - 90) % 15, 0);
-  assert.deepEqual(p, hitPosition(h));
-  cells.add(`${p.x},${p.y}`);
+var other = { ...silence, values: new Float32Array(silence.values.length) };
+for (let frame = 0; frame < other.values.length / STRIDE; frame++) {
+  for (let band = 0; band < 5; band++) other.values[frame * STRIDE + band] = 0.9;
+  other.values[frame * STRIDE + 5] = 0.8;
 }
-assert.ok(cells.size >= 12, "random hits distributed throughout central grid");
-var options = { hits: [{ ...hits[0], time: 0.2 }], otherSignal: silence, fps: 10 };
-var attack = planFrame(pulses, 0.21, 1, options);
-assert.equal(attack.tiles.length, 1);
-assert.ok(attack.trace.length > 0, "drum attacks write pen ink even with silent non-drum stem");
-assert.deepEqual(attack, planFrame(pulses, 0.29, 1, options), "10 FPS frame hold");
-var moved = planFrame(pulses, 0.4, 1, options);
-assert.equal(moved.tiles.length, 1);
-assert.ok(moved.tiles[0].x < attack.tiles[0].x, "drum ink must move left across frames");
-assert.equal(moved.tiles[0].y, attack.tiles[0].y, "row remains fixed");
-assert.equal(planFrame(pulses, 2, 1, options).tiles.length, 0, "ink clears after exiting central square");
-var rightHit = hits.find((h) => hitPosition(h).x === 175);
-var scrolling = { ...options, hits: [{ ...rightHit, time: 0.2 }], tempo: { bpm: 120, offset: 0.2, confidence: 1 } };
-assert.equal(planFrame(pulses, 0.7, 1, scrolling).tiles[0].x, 160, "one cell of travel per beat");
-assert.equal(planFrame(pulses, 2.1, 1, scrolling).tiles[0].x, 118, "partially visible tile survives at left clip boundary");
-assert.equal(planFrame(pulses, 2.2, 1, scrolling).tiles.length, 0, "fully clipped tile removed");
-assert.deepEqual(planFrame(pulses, 0.7, 1, scrolling), planFrame(pulses, 0.7, 1, scrolling), "seek is deterministic");
-var middleHit = hits.find((h) => hitPosition(h).x === 160 && hitPosition(h).y === hitPosition(rightHit).y);
-assert.ok(middleHit);
-for (const bpm of [80, 127, 149.75, 180]) {
-  const shared = { ...options, tempo: { bpm, offset: 0, confidence: 1 }, hits: [{ ...rightHit, time: 0.013 }, { ...middleHit, time: 0.087 }] };
-  const a = planFrame(pulses, 0.1, 1, shared).tiles, b = planFrame(pulses, 0.2, 1, shared).tiles;
-  assert.equal(a.length, 2);
-  assert.equal(b.length, 2);
-  assert.equal(a[0].x - a[1].x, 15, "off-beat hits share exact grid spacing");
-  assert.equal(a[0].x - b[0].x, a[1].x - b[1].x, "every tile moves the same pixels per frame");
-  const repeated = { ...shared, hits: [{ ...rightHit, time: 0.013 }, { ...rightHit, time: 0.087 }] };
-  assert.equal(planFrame(pulses, 0.1, 1, repeated).tiles.length, 1, "same moving cell is re-struck, not layered");
-}
-assert.equal(planFrame(pulses, 0.2, 1, { hits: [], otherSignal: pulses, tempo: { bpm: 150, offset: 0, confidence: 1 } }).tiles.length, 0, "metronome must not invent drum hits");
-console.log(`PASS: complementary separation, silence, attacks, ${cells.size}/16 central cells, frame hold, leftward drum transport, boundary exit and stem isolation`);
+var baseOptions = { hits: [], otherSignal: other, fps: 10, tileFade: 0.3 };
+var base = planFrame(pulses, 0.9, 1, baseOptions);
+assert.ok(base.tiles.length >= 6, "the non-drum stem holds its assigned tiles");
+assert.ok(base.tiles.every((tile) => tile.source === "other"), "an empty hit list cannot invent drum tiles");
+assert.ok(base.tiles.every((tile) => tile.x >= 130 && tile.x <= 175 && tile.y >= 90 && tile.y <= 135), "assigned tiles remain in the fixed 4x4 grid");
+var kick = { time: 1, kind: "kick", strength: 1, seed: 1 };
+var options = { ...baseOptions, hits: [kick] };
+var attack = planFrame(pulses, 1.01, 1, options);
+assert.ok(attack.tiles.some((tile) => tile.source === "drums"), "a kick lights its assigned pads");
+assert.equal(attack.tiles.filter((tile) => tile.source === "other").length, 0, "a strong kick switches the held non-drum pads off");
+assert.deepEqual(attack.tiles.filter((tile) => tile.source === "drums").map((tile) => [tile.x, tile.y]), [[130, 105], [145, 120]], "kick reuses fixed assigned pads");
+assert.ok(attack.trace.length > 0, "drum attacks still write pen ink");
+assert.deepEqual(attack, planFrame(pulses, 1.099, 1, options), "10 FPS frame hold");
+var recovering = planFrame(pulses, 1.2, 1, options).tiles.filter((tile) => tile.source === "other");
+assert.ok(recovering.length > 0 && recovering.every((tile) => (tile.opacity ?? 1) < 1), "held pads fade back after the kick blackout");
+var fast = planFrame(pulses, 1.3, 1, { ...options, tileFade: 0.1 }).tiles.filter((tile) => tile.source === "other").reduce((sum, tile) => sum + (tile.opacity ?? 1), 0);
+var slow = planFrame(pulses, 1.3, 1, { ...options, tileFade: 0.6 }).tiles.filter((tile) => tile.source === "other").reduce((sum, tile) => sum + (tile.opacity ?? 1), 0);
+assert.ok(fast > slow, "tile fade duration controls recovery speed");
+assert.deepEqual(planFrame(pulses, 1.2, 1, options), planFrame(pulses, 1.2, 1, options), "seek is deterministic");
+var metronome = planFrame(pulses, 0.9, 1, { hits: [], otherSignal: other, tempo: { bpm: 150, offset: 0, confidence: 1 } });
+assert.ok(metronome.tiles.length > 0 && metronome.tiles.every((tile) => tile.source === "other"), "tempo can time motion but cannot invent drum pads");
+console.log("PASS: complementary separation, silence, attacks, fixed stem-assigned tiles, kick ducking, fade recovery, frame hold and deterministic seeking");

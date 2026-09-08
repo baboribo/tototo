@@ -36,7 +36,7 @@ function ReactionSlider({ id, min, max, step, initial }: { id: string; min: numb
   const output = useRef<HTMLOutputElement>(null);
   return <div className="slider-field">
     <input ref={input} id={id} type="hidden" defaultValue={initial} />
-    <Slider aria-label={id === 'impact' ? '박자 강조' : '반응 감도'} min={min} max={max} step={step} defaultValue={[initial]} onValueChange={([value]) => {
+    <Slider aria-label={id === 'impact' ? '박자 강조' : id === 'tile-fade' ? '타일 페이드' : '반응 감도'} min={min} max={max} step={step} defaultValue={[initial]} onValueChange={([value]) => {
       if (!input.current) return;
       input.current.value = String(value);
       input.current.dispatchEvent(new Event('input', { bubbles: true }));
@@ -117,6 +117,7 @@ function Workspace() {
                   <Field name="모션 프레임" id="fps"><NativeSelect id="fps" defaultValue="10">{[10,12,15,24,30,60].map(fps => <NativeSelectOption key={fps} value={fps}>{fps} FPS</NativeSelectOption>)}</NativeSelect></Field>
                   <Field name="외곽선 입력" id="perimeter-source"><NativeSelect id="perimeter-source" defaultValue="both"><NativeSelectOption value="both">드럼 + 나머지</NativeSelectOption><NativeSelectOption value="drums">드럼</NativeSelectOption><NativeSelectOption value="other">나머지</NativeSelectOption></NativeSelect></Field>
                   <Field name="박자 강조" id="impact"><ReactionSlider id="impact" min={0} max={1.6} step={.05} initial={1.1} /></Field>
+                  <Field name="타일 페이드 (초)" id="tile-fade"><ReactionSlider id="tile-fade" min={.05} max={.8} step={.05} initial={.3} /></Field>
                   <Field name="반응 감도" id="sensitivity"><ReactionSlider id="sensitivity" min={.5} max={1.8} step={.05} initial={1} /></Field>
                 </section>
                 <Separator />
