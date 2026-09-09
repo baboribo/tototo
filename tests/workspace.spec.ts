@@ -154,6 +154,8 @@ test('two valid stems load as the primary source', async ({page}) => {
   await expect(page.locator('#load-status')).not.toHaveAttribute('data-error','true');
   await expect(page.locator('#download-drums')).toBeVisible();
   await expect(page.locator('#download-other')).toBeVisible();
+  await expect(page.locator('#export-video')).toBeEnabled();
+  await expect(page.locator('#export-video')).toContainText('동영상 내보내기');
   await page.locator('#toggle').click();
   await expect.poll(() => page.locator('#audio').evaluate((node: HTMLAudioElement) => node.currentTime)).toBeGreaterThan(.1);
   await page.locator('#toggle').click();

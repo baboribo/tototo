@@ -6,6 +6,7 @@ import { recentHits, type DrumHit } from './drums';
 import { wav } from './separation';
 import { DrumPanel } from './drum-panel';
 import type { PerimeterSource } from './reactive-ink';
+import { muxMp4, type EncodedSample } from './mp4';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#visualizer')!;
 const toggle = document.querySelector<HTMLButtonElement>('#toggle')!;
@@ -38,9 +39,11 @@ let tilesVersion = 0;
 let resumeAfterTiles = false;
 let stemUrls: {mix:string;drums:string;other:string}|undefined;
 let auxiliaryUrls:string[]=[];
+let exporting=false;
 let drumFile:File|undefined,otherFile:File|undefined;
 const monitor=document.querySelector<HTMLSelectElement>('#monitor')!;
 const applyStems=document.querySelector<HTMLButtonElement>('#apply-stems')!;
+const exportButton=document.querySelector<HTMLButtonElement>('#export-video')!;
 let worker: Worker | undefined;
 let lastRendered = -1;
 const renderer = new MotionRenderer(canvas);
@@ -128,12 +131,23 @@ function animationFrame() {
   }
   requestAnimationFrame(animationFrame);
 }
-async function ensureAudioGraph() { audioContext ??= new AudioContext(); }
+let audioSource: MediaElementAudioSourceNode | undefined;
+let recordDestination: MediaStreamAudioDestinationNode | undefined;
+async function ensureAudioGraph() {
+  audioContext ??= new AudioContext();
+  if (!audioSource) {
+    audioSource = audioContext.createMediaElementSource(audio);
+    recordDestination = audioContext.createMediaStreamDestination();
+    audioSource.connect(audioContext.destination);
+    audioSource.connect(recordDestination);
+  }
+}
 
 function enableWhenReady() {
   if (!mediaReady || !signal || loadFailed) return;
   if (tileMode==='preload'&&!preloadedTiles) return;
   ready = true; toggle.disabled = reset.disabled = scrubber.disabled = false;
+  exportButton.disabled = false;
   monitor.disabled=false;
   scrubber.max = String(currentDuration);
   document.querySelector('#duration-readout')!.textContent = `${String(Math.floor(currentDuration / 60)).padStart(2, '0')}:${String(Math.floor(currentDuration % 60)).padStart(2, '0')}`;
@@ -198,6 +212,255 @@ caption.addEventListener('input', () => syncFromAudio());
 for (const control of [fps, impact, tileFade, bpm, tempoScale, beatOffset]) control.addEventListener('input', () => { updateTempoUI(); if(tileMode==='preload')rebuildTiles();else syncFromAudio(); });
 perimeterSource.addEventListener('input',()=>syncFromAudio());
 
+const exportSheet = document.querySelector<HTMLDialogElement>('#export-sheet')!;
+const exportSheetStatus = document.querySelector<HTMLElement>('#export-sheet-status')!;
+const exportProgress = document.querySelector<HTMLElement>('#export-progress')!;
+const exportProgressLabel = document.querySelector<HTMLElement>('#export-progress-label')!;
+const exportFormatLabel = document.querySelector<HTMLElement>('#export-format-label')!;
+let exportCancel = false;
+function setExportProgress(message: string, value: number) {
+  const percent = Math.max(0, Math.min(100, Math.round(value)));
+  exportSheetStatus.textContent = message;
+  exportProgress.style.width = `${percent}%`;
+  exportProgressLabel.textContent = `${percent}%`;
+}
+function openExportSheet(mime: string) {
+  exportCancel = false;
+  exportFormatLabel.textContent = mime.startsWith('video/mp4') ? 'MP4' : 'WebM';
+  setExportProgress('빠른 렌더링을 준비하고 있습니다…', 0);
+  if (!exportSheet.open) exportSheet.showModal();
+}
+function downloadExport(blob: Blob, mime: string) {
+  const isMp4 = mime.startsWith('video/mp4');
+  const base = (selectedName.split(' + ')[0] || 'tototo').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9가-힣_-]+/g, '-');
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${base || 'tototo'}-motion.${isMp4 ? 'mp4' : 'webm'}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+async function hasSeekableMp4(blob: Blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const text = new TextDecoder('latin1').decode(bytes);
+  const moov = text.indexOf('moov');
+  const mvhd = text.indexOf('mvhd', Math.max(0, moov));
+  if (moov < 4 || mvhd < 0 || mvhd + 24 > bytes.length) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const version = bytes[mvhd + 4];
+  if (version === 1 && mvhd + 40 <= bytes.length) return view.getUint32(mvhd + 28) > 0 && view.getBigUint64(mvhd + 32) > 0n;
+  return view.getUint32(mvhd + 16) > 0 && view.getUint32(mvhd + 20) > 0;
+}
+
+type ExportGlobals = { MediaStreamTrackGenerator?: new (options: { kind: 'audio' | 'video' }) => any; VideoFrame?: new (source: CanvasImageSource, options: { timestamp: number; duration?: number }) => any; AudioData?: new (options: Record<string, unknown>) => any };
+async function fastMp4Export(): Promise<Blob | undefined> {
+  const globals = window as unknown as ExportGlobals & { VideoEncoder?: any; AudioEncoder?: any };
+  if (!globals.VideoEncoder || !globals.AudioEncoder || !globals.VideoFrame || !globals.AudioData || !objectUrl) return undefined;
+  const decoded = await audioContext!.decodeAudioData(await (await fetch(objectUrl)).arrayBuffer());
+  const rate = Math.max(10, Number(fps.value));
+  const frameDuration = 1 / rate;
+  const videoSamples: (EncodedSample & { timestamp: number })[] = [];
+  const audioSamples: (EncodedSample & { timestamp: number })[] = [];
+  let avcDescription = new Uint8Array();
+  let aacDescription = new Uint8Array();
+  let videoError: Error | undefined;
+  let audioError: Error | undefined;
+  const videoEncoder = new globals.VideoEncoder({
+    output: (chunk: any, metadata: any) => {
+      const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+      const description = metadata?.decoderConfig?.description;
+      if (description) avcDescription = new Uint8Array(description.slice ? description.slice(0) : description);
+      videoSamples.push({ data, duration: Math.round(frameDuration * 90000), timestamp: chunk.timestamp ?? 0, key: chunk.type === 'key' });
+    },
+    error: (error: Error) => { videoError = error; },
+  });
+  const audioEncoder = new globals.AudioEncoder({
+    output: (chunk: any, metadata: any) => {
+      const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+      const description = metadata?.decoderConfig?.description;
+      if (description) aacDescription = new Uint8Array(description.slice ? description.slice(0) : description);
+      // EncodedAudioChunk.duration is expressed in microseconds; the MP4
+      // audio track uses sample-rate ticks instead.
+      audioSamples.push({ data, duration: chunk.duration ? Math.max(1, Math.round(chunk.duration * decoded.sampleRate / 1e6)) : 1024, timestamp: chunk.timestamp ?? 0 });
+    },
+    error: (error: Error) => { audioError = error; },
+  });
+  try {
+    const videoConfig = { codec: 'avc1.42001f', width: canvas.width, height: canvas.height, bitrate: 8_000_000, framerate: rate, avc: { format: 'avc' } };
+    const audioConfig = { codec: 'mp4a.40.2', sampleRate: decoded.sampleRate, numberOfChannels: decoded.numberOfChannels, bitrate: 192_000 };
+    if (!(await globals.VideoEncoder.isConfigSupported(videoConfig)).supported || !(await globals.AudioEncoder.isConfigSupported(audioConfig)).supported) return undefined;
+    videoEncoder.configure(videoConfig); audioEncoder.configure(audioConfig);
+    const frameCount = Math.ceil(currentDuration * rate);
+    for (let index = 0; index < frameCount; index++) {
+      if (exportCancel) throw new Error('내보내기가 취소되었습니다.');
+      const time = Math.min(index / rate, Math.max(0, currentDuration - frameDuration));
+      draw(time);
+      const frame = new globals.VideoFrame(canvas, { timestamp: Math.round(time * 1e6), duration: Math.round(frameDuration * 1e6) });
+      videoEncoder.encode(frame, { keyFrame: index === 0 || index % Math.max(1, Math.round(rate * 2)) === 0 }); frame.close();
+      if (videoEncoder.encodeQueueSize > 12) await videoEncoder.flush();
+      if (index % Math.max(1, Math.floor(rate / 4)) === 0) setExportProgress('화면을 빠르게 프레임 단위로 렌더링하고 있습니다…', index / frameCount * 72);
+    }
+    await videoEncoder.flush();
+    const chunkSize = 2048;
+    const channels = decoded.numberOfChannels;
+    for (let offset = 0; offset < decoded.length; offset += chunkSize) {
+      if (exportCancel) throw new Error('내보내기가 취소되었습니다.');
+      const count = Math.min(chunkSize, decoded.length - offset);
+      const interleaved = new Float32Array(count * channels);
+      for (let frame = 0; frame < count; frame++) for (let channel = 0; channel < channels; channel++) interleaved[frame * channels + channel] = decoded.getChannelData(channel)[offset + frame];
+      const audioData = new globals.AudioData({ format: 'f32', sampleRate: decoded.sampleRate, numberOfFrames: count, numberOfChannels: channels, timestamp: Math.round(offset / decoded.sampleRate * 1e6), data: interleaved });
+      audioEncoder.encode(audioData); audioData.close();
+      if (audioEncoder.encodeQueueSize > 12) await audioEncoder.flush();
+      if (offset % (chunkSize * 16) === 0) setExportProgress('오디오를 빠르게 인코딩하고 있습니다…', 72 + offset / decoded.length * 20);
+    }
+    await audioEncoder.flush();
+    if (videoError || audioError || !videoSamples.length || !audioSamples.length || !avcDescription.length) return undefined;
+    videoSamples.sort((a, b) => a.timestamp - b.timestamp); audioSamples.sort((a, b) => a.timestamp - b.timestamp);
+    setExportProgress('MP4 인덱스와 오디오 트랙을 묶고 있습니다…', 96);
+    return muxMp4(
+      { kind: 'video', samples: videoSamples, timescale: 90000, description: avcDescription, width: canvas.width, height: canvas.height },
+      { kind: 'audio', samples: audioSamples, timescale: decoded.sampleRate, description: aacDescription, channels: decoded.numberOfChannels, sampleRate: decoded.sampleRate },
+    );
+  } finally {
+    videoEncoder.close(); audioEncoder.close();
+  }
+}
+async function fastExport(mime: string): Promise<Blob | undefined> {
+  const globals = window as unknown as ExportGlobals;
+  if (!globals.MediaStreamTrackGenerator || !globals.VideoFrame || !globals.AudioData || !objectUrl) return undefined;
+  const videoTrack = new globals.MediaStreamTrackGenerator({ kind: 'video' });
+  const audioTrack = new globals.MediaStreamTrackGenerator({ kind: 'audio' });
+  const videoWriter = videoTrack.writable.getWriter();
+  const audioWriter = audioTrack.writable.getWriter();
+  const stream = new MediaStream([videoTrack, audioTrack]);
+  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+  const stopped = new Promise<Blob>((resolve, reject) => {
+    recorder.onerror = () => reject(new Error('빠른 인코딩 중 오류가 발생했습니다.'));
+    recorder.onstop = () => resolve(new Blob(chunks, { type: mime }));
+  });
+  // Keep one final container chunk so its duration and seek index are closed.
+  recorder.start();
+  try {
+    const decoded = await audioContext!.decodeAudioData(await (await fetch(objectUrl)).arrayBuffer());
+    const rate = Math.max(10, Number(fps.value));
+    const frameCount = Math.ceil(currentDuration * rate);
+    const renderVideo = async () => {
+      for (let index = 0; index < frameCount; index++) {
+        if (exportCancel) throw new Error('내보내기가 취소되었습니다.');
+        const time = Math.min(index / rate, Math.max(0, currentDuration - 1 / rate));
+        draw(time);
+        const frame = new globals.VideoFrame!(canvas, { timestamp: Math.round(time * 1e6), duration: Math.round(1e6 / rate) });
+        await videoWriter.write(frame);
+        frame.close();
+        if (index % Math.max(1, Math.floor(rate / 4)) === 0) setExportProgress('화면 프레임을 빠르게 렌더링하고 있습니다…', index / frameCount * 78);
+      }
+      await videoWriter.close();
+    };
+    const renderAudio = async () => {
+      const chunkSize = 2048;
+      const channels = decoded.numberOfChannels;
+      for (let offset = 0; offset < decoded.length; offset += chunkSize) {
+        if (exportCancel) throw new Error('내보내기가 취소되었습니다.');
+        const count = Math.min(chunkSize, decoded.length - offset);
+        const interleaved = new Float32Array(count * channels);
+        for (let frame = 0; frame < count; frame++) for (let channel = 0; channel < channels; channel++) interleaved[frame * channels + channel] = decoded.getChannelData(channel)[offset + frame];
+        const data = new globals.AudioData!({ format: 'f32', sampleRate: decoded.sampleRate, numberOfFrames: count, numberOfChannels: channels, timestamp: Math.round(offset / decoded.sampleRate * 1e6), data: interleaved });
+        await audioWriter.write(data);
+        data.close();
+      }
+      await audioWriter.close();
+    };
+    await Promise.all([renderVideo(), renderAudio()]);
+    setExportProgress('오디오와 화면을 하나의 파일로 묶고 있습니다…', 94);
+    recorder.stop();
+    return await stopped;
+  } catch (error) {
+    if (recorder.state !== 'inactive') recorder.stop();
+    try { await stopped; } catch { /* the original error is more useful */ }
+    throw error;
+  }
+}
+
+async function realtimeExport(mime: string): Promise<Blob> {
+  if (!recordDestination) throw new Error('이 브라우저에서는 동영상 오디오 녹음을 사용할 수 없습니다.');
+  const canvasStream = canvas.captureStream(30);
+  const stream = new MediaStream([...canvasStream.getVideoTracks(), ...recordDestination.stream.getAudioTracks()]);
+  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 192_000 });
+  const chunks: Blob[] = [];
+  const progressTimer = setInterval(() => {
+    if (exportCancel && recorder.state !== 'inactive') { audio.pause(); recorder.stop(); }
+    setExportProgress('호환 모드로 화면과 소리를 녹화하고 있습니다…', audio.currentTime / currentDuration * 100);
+  }, 200);
+  try {
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+      recorder.onerror = () => reject(new Error('녹화 중 오류가 발생했습니다.'));
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mime }));
+      audio.currentTime = 0; audio.playbackRate = 1; clearAnalysis(); syncFromAudio();
+      // Timesliced MP4 can remain a live-style fragmented file. Finalize it
+      // only at stop so desktop players see a stable duration.
+      recorder.start();
+      void audioContext!.resume().then(() => audio.play()).catch(reject);
+      audio.addEventListener('ended', () => { if (recorder.state !== 'inactive') recorder.stop(); }, { once: true });
+    });
+    return blob;
+  } finally {
+    clearInterval(progressTimer);
+    if (recorder.state !== 'inactive') recorder.stop();
+    canvasStream.getTracks().forEach(track => track.stop());
+  }
+}
+
+async function exportVideo() {
+  if (!ready || exporting || !signal) return;
+  try { await ensureAudioGraph(); } catch { status.textContent = '이 브라우저에서는 동영상 오디오 녹음을 사용할 수 없습니다.'; status.dataset.error = 'true'; return; }
+  if (!('MediaRecorder' in window)) { status.textContent = '이 브라우저에서는 동영상 내보내기를 지원하지 않습니다.'; status.dataset.error = 'true'; return; }
+  const mime = ['video/mp4', 'video/mp4;codecs=h264,aac', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type));
+  if (!mime) { status.textContent = '이 브라우저에서는 동영상 내보내기를 지원하지 않습니다.'; return; }
+  const originalTime = audio.currentTime;
+  const originalPlaybackRate = audio.playbackRate;
+  const originalPlaying = playing;
+  exporting = true; exportButton.disabled = true; toggle.disabled = reset.disabled = scrubber.disabled = true;
+  openExportSheet(mime);
+  audio.pause(); playing = false; updatePlayControl();
+  try {
+    let blob: Blob | undefined;
+    // MP4 uses WebCodecs plus our own seekable ISO-BMFF muxer, so rendering
+    // is detached from playback speed instead of relying on live MediaRecorder.
+    try { blob = mime.startsWith('video/mp4') ? await fastMp4Export() : await fastExport(mime); } catch (error) {
+      if (exportCancel) throw error;
+      setExportProgress('빠른 렌더링을 지원하지 않아 호환 모드로 전환합니다…', 0);
+      blob = await realtimeExport(mime);
+    }
+    if (exportCancel) throw new Error('내보내기가 취소되었습니다.');
+    if (!blob) { setExportProgress(mime.startsWith('video/mp4') ? 'MP4 컨테이너의 재생 정보를 마무리하고 있습니다…' : '호환 모드로 내보내고 있습니다…', 0); blob = await realtimeExport(mime); }
+    let outputMime = mime;
+    if (mime.startsWith('video/mp4') && !(await hasSeekableMp4(blob))) {
+      const webm = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type));
+      if (!webm) throw new Error('브라우저가 재생 가능한 MP4 컨테이너를 만들지 못했습니다.');
+      setExportProgress('브라우저의 MP4 인덱스가 불완전해 호환 포맷으로 다시 내보내고 있습니다…', 0);
+      audio.pause(); audio.currentTime = 0; blob = await realtimeExport(webm); outputMime = webm;
+      exportFormatLabel.textContent = 'WebM · 호환 대체';
+    }
+    downloadExport(blob, outputMime);
+    const outputName = outputMime.startsWith('video/mp4') ? 'MP4' : 'WebM';
+    setExportProgress(`${outputName} 내보내기가 완료되었습니다.`, 100);
+    status.dataset.error = 'false'; status.textContent = `${selectedName} · ${outputName} 내보내기 완료`;
+    setTimeout(() => { if (exportSheet.open) exportSheet.close(); }, 800);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '동영상 내보내기에 실패했습니다.';
+    setExportProgress(message, 0); status.textContent = message; status.dataset.error = exportCancel ? 'false' : 'true';
+    if (exportSheet.open) exportSheet.close();
+  } finally {
+    audio.pause(); audio.currentTime = Math.min(originalTime, currentDuration); audio.playbackRate = originalPlaybackRate; playing = false; clearAnalysis(); syncFromAudio();
+    if (originalPlaying) { try { await setPlaying(true); } catch { status.textContent = '내보내기는 완료했지만 재생을 다시 시작하지 못했습니다.'; } }
+    exporting = false; exportButton.disabled = !ready; toggle.disabled = reset.disabled = scrubber.disabled = !ready; if (!originalPlaying) updatePlayControl();
+  }
+}
+document.querySelector<HTMLButtonElement>('#cancel-export')!.addEventListener('click', () => { exportCancel = true; setExportProgress('내보내기를 취소하고 있습니다…', 0); });
+exportButton.addEventListener('click', () => { void exportVideo(); });
+
 async function setPlaying(next: boolean) {
   if (!ready) return;
   const version = loadVersion;
@@ -223,7 +486,7 @@ function fail(message: string) {
   worker?.terminate(); worker = undefined;
   playing = false; ready = false; audio.pause();
   monitor.disabled=true;
-  updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true;
+  updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true; exportButton.disabled = true;
   status.textContent = message; status.dataset.error = 'true';
 }
 async function loadFile(file: File, restFile?:File, mode: 'live'|'preload' = 'live') {
@@ -242,7 +505,7 @@ async function loadFile(file: File, restFile?:File, mode: 'live'|'preload' = 'li
   bpm.value = ''; tempoScale.value = '1'; beatOffset.value = '0'; updateTempoUI();
   playing = ready = false; audio.pause(); audio.removeAttribute('src'); audio.load();
   if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = undefined; }
-  updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true;
+  updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true; exportButton.disabled = true;
   document.querySelector('#duration-readout')!.textContent = '00:00';
   currentDuration = 0; scrubber.value = '0';
   selectedName = restFile?`${file.name} + ${restFile.name}`:file.name; sourceLabel.textContent = selectedName;

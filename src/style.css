@@ -209,3 +209,14 @@ kbd { border: 1px solid #d8dbd0; border-radius: 3px; padding: 1px 4px; backgroun
 .tile-mode-choices { display: grid; gap: 12px; margin: 20px 0; }
 .tile-mode-choices button { height: auto; min-height: 82px; display: flex; flex-direction: column; align-items: flex-start; white-space: normal; text-align: left; padding: 16px; }
 .tile-mode-choices small { font-weight: 400; line-height: 1.6; color: #64695d; }
+.export-sheet { position: fixed; inset: auto 18px 18px auto; width: min(390px, calc(100vw - 36px)); margin: 0; padding: 22px 24px 24px; border: 1px solid #d1d3ca; border-radius: 14px; background: #f9faf6; color: #30332a; box-shadow: 0 18px 60px #20251b38; }
+.export-sheet::backdrop { background: #20251b38; }
+.export-sheet-grabber { display: none; }
+.export-sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.export-eyebrow { margin: 0 0 5px; color: #778067; font: 10px var(--mono); letter-spacing: .12em; }
+.export-sheet h2 { margin: 0; font-size: 19px; font-weight: 650; }
+.export-sheet-status { min-height: 24px; margin: 22px 0 12px; color: #62685b; font-size: 12px; line-height: 1.5; }
+.export-progress-track { height: 5px; overflow: hidden; border-radius: 5px; background: #e0e3d9; }
+.export-progress { width: 0; height: 100%; border-radius: inherit; background: #65754d; transition: width .12s ease-out; }
+.export-sheet-meta { display: flex; justify-content: space-between; margin-top: 10px; color: #818679; font: 10px var(--mono); }
+@media (max-width: 720px) { .export-sheet { inset: auto 0 0; width: 100%; border-radius: 14px 14px 0 0; padding: 10px 20px 22px; } .export-sheet-grabber { display: block; width: 42px; height: 4px; margin: 0 auto 15px; border-radius: 4px; background: #c7cbbf; } }

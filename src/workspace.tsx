@@ -2,7 +2,7 @@ import './style.css';
 import { useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { AudioLines, ChevronLeft, ChevronRight, Download, Headphones, Maximize2, PanelRightClose, Pause, Play, RotateCcw, SlidersHorizontal, Upload } from 'lucide-react';
+import { AudioLines, ChevronLeft, ChevronRight, Download, Headphones, Maximize2, PanelRightClose, Pause, Play, RotateCcw, SlidersHorizontal, Upload, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -55,6 +55,7 @@ function Workspace() {
         <Separator orientation="vertical" className="toolbar-divider" />
         <div className="document-name"><AudioLines aria-hidden="true" /><span id="source-label">파일 없음</span></div>
         <Separator orientation="vertical" className="toolbar-divider" />
+        <Hint text="현재 음악과 화면을 동영상으로 내보내기"><Button id="export-video" variant="outline" size="sm" disabled><Video aria-hidden="true" />동영상 내보내기</Button></Hint>
         <Hint text="설정 패널 표시 / 숨기기"><Button size="icon" variant="ghost" aria-label="설정 패널 숨기기" aria-pressed={false} onClick={event => {
           const shell = document.querySelector<HTMLElement>('#workspace')!;
           const hidden = shell.dataset.inspectorHidden !== 'true';
@@ -151,6 +152,13 @@ function Workspace() {
         </aside>
       </main>
       <footer className="statusbar"><p id="load-status" role="status" aria-live="polite">드럼과 나머지 스템을 선택하세요.</p><span className="shortcut-hint"><kbd>Space</kbd> 재생 / 일시정지</span></footer>
+      <dialog id="export-sheet" className="export-sheet" aria-labelledby="export-sheet-title" aria-describedby="export-sheet-status">
+        <div className="export-sheet-grabber" aria-hidden="true" />
+        <div className="export-sheet-header"><div><p className="export-eyebrow">RENDER QUEUE</p><h2 id="export-sheet-title">동영상 내보내기</h2></div><Button id="cancel-export" variant="ghost" size="sm">취소</Button></div>
+        <p id="export-sheet-status" className="export-sheet-status" role="status" aria-live="polite">렌더링을 준비하고 있습니다…</p>
+        <div className="export-progress-track"><div id="export-progress" className="export-progress" /></div>
+        <div className="export-sheet-meta"><span id="export-progress-label">0%</span><span id="export-format-label">MP4 / WebM</span></div>
+      </dialog>
       <audio id="audio" preload="metadata" />
     </div>
   </TooltipProvider>;
