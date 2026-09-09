@@ -1,5 +1,5 @@
 import './style.css';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { AudioLines, ChevronLeft, ChevronRight, Download, Headphones, Maximize2, PanelRightClose, Pause, Play, RotateCcw, SlidersHorizontal, Upload, Video } from 'lucide-react';
@@ -11,6 +11,9 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Progress } from '@/components/ui/progress';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 function Hint({ text, children }: { text: string; children: ReactNode }) {
   return <Tooltip><TooltipTrigger asChild>{children}</TooltipTrigger><TooltipContent>{text}</TooltipContent></Tooltip>;
@@ -47,6 +50,17 @@ function ReactionSlider({ id, min, max, step, initial }: { id: string; min: numb
 }
 
 function Workspace() {
+  const [exportState, setExportState] = useState({ open: false, message: '렌더링을 준비하고 있습니다…', value: 0, format: 'MP4 / WebM' });
+  const [tileModeOpen, setTileModeOpen] = useState(false);
+  useEffect(() => {
+    const open = (event: Event) => { const detail = (event as CustomEvent<{ format?: string }>).detail; setExportState(state => ({ ...state, open: true, value: 0, format: detail?.format ?? state.format })); };
+    const progress = (event: Event) => { const detail = (event as CustomEvent<{ message: string; value: number; format?: string }>).detail; setExportState(state => ({ ...state, message: detail.message, value: detail.value, format: detail.format ?? state.format })); };
+    const close = () => setExportState(state => ({ ...state, open: false }));
+    const openTileMode = () => setTileModeOpen(true);
+    const closeTileMode = () => setTileModeOpen(false);
+    window.addEventListener('tototo:export-open', open); window.addEventListener('tototo:export-progress', progress); window.addEventListener('tototo:export-close', close); window.addEventListener('tototo:tile-mode-open', openTileMode); window.addEventListener('tototo:tile-mode-close', closeTileMode);
+    return () => { window.removeEventListener('tototo:export-open', open); window.removeEventListener('tototo:export-progress', progress); window.removeEventListener('tototo:export-close', close); window.removeEventListener('tototo:tile-mode-open', openTileMode); window.removeEventListener('tototo:tile-mode-close', closeTileMode); };
+  }, []);
   return <TooltipProvider delayDuration={350}>
     <a href="#preview" className="skip-link">캔버스로 이동</a>
     <div className="workspace" id="workspace">
@@ -100,16 +114,17 @@ function Workspace() {
                   <div className="stem-file-list"><StemFileInput id="drum-file" label="드럼 스템" /><StemFileInput id="other-file" label="나머지 스템" /></div>
                   <Button id="apply-stems" className="w-full" disabled>두 스템 불러오기</Button>
                   <p id="tile-mode-readout" className="field-help">타일 생성 방식은 불러올 때 선택합니다.</p>
-                  <dialog id="tile-mode-dialog" className="tile-mode-dialog" aria-labelledby="tile-mode-title" aria-describedby="tile-mode-description">
-                    <h2 id="tile-mode-title">타일 생성 방식</h2>
-                    <p id="tile-mode-description">이 곡의 타일을 어떻게 준비할까요?</p>
+                  <Dialog open={tileModeOpen} onOpenChange={open => { setTileModeOpen(open); if (!open) window.dispatchEvent(new CustomEvent('tototo:tile-mode-close')); }}>
+                    <DialogContent id="tile-mode-dialog" className="tile-mode-dialog" showCloseButton={false}>
+                      <DialogHeader><DialogTitle id="tile-mode-title">타일 생성 방식</DialogTitle><DialogDescription id="tile-mode-description">이 곡의 타일을 어떻게 준비할까요?</DialogDescription></DialogHeader>
                     <div className="tile-mode-choices">
                       <Button id="choose-live" variant="outline"><span>즉흥 생성 · 현재 방식</span><small>재생 위치의 오디오로 타일을 계산합니다.</small></Button>
                       <Button id="choose-preload" variant="outline"><span>사전 생성 · 프리로드</span><small>곡 전체의 타일과 반응을 미리 준비한 뒤 재생합니다.</small></Button>
                     </div>
                     <p className="field-help">사전 생성은 준비 시간이 필요합니다. 감도·박자·드럼 설정을 바꾸면 다시 생성합니다.</p>
                     <Button id="cancel-tile-mode" variant="ghost">취소</Button>
-                  </dialog>
+                    </DialogContent>
+                  </Dialog>
                   <details className="technical-note"><summary>입력 안내</summary><p id="stem-mode">드럼과 나머지 파일은 같은 곡에서 같은 시작 시점으로 분리한 스템이어야 합니다.</p></details>
                   <div className="stem-downloads"><a id="download-drums" hidden><Download aria-hidden="true" />드럼 저장</a><a id="download-other" hidden><Download aria-hidden="true" />나머지 저장</a></div>
                 </section>
@@ -152,13 +167,14 @@ function Workspace() {
         </aside>
       </main>
       <footer className="statusbar"><p id="load-status" role="status" aria-live="polite">드럼과 나머지 스템을 선택하세요.</p><span className="shortcut-hint"><kbd>Space</kbd> 재생 / 일시정지</span></footer>
-      <dialog id="export-sheet" className="export-sheet" aria-labelledby="export-sheet-title" aria-describedby="export-sheet-status">
-        <div className="export-sheet-grabber" aria-hidden="true" />
-        <div className="export-sheet-header"><div><p className="export-eyebrow">RENDER QUEUE</p><h2 id="export-sheet-title">동영상 내보내기</h2></div><Button id="cancel-export" variant="ghost" size="sm">취소</Button></div>
-        <p id="export-sheet-status" className="export-sheet-status" role="status" aria-live="polite">렌더링을 준비하고 있습니다…</p>
-        <div className="export-progress-track"><div id="export-progress" className="export-progress" /></div>
-        <div className="export-sheet-meta"><span id="export-progress-label">0%</span><span id="export-format-label">MP4 / WebM</span></div>
-      </dialog>
+      <Sheet open={exportState.open} onOpenChange={open => { if (!open) window.dispatchEvent(new CustomEvent('tototo:export-cancel')); }}>
+        <SheetContent id="export-sheet" side="bottom" showCloseButton={false} className="export-sheet">
+          <SheetHeader className="export-sheet-header"><p className="export-eyebrow">RENDER QUEUE</p><SheetTitle id="export-sheet-title">동영상 내보내기</SheetTitle><SheetDescription id="export-sheet-status" className="export-sheet-status">{exportState.message}</SheetDescription></SheetHeader>
+          <Progress id="export-progress" value={exportState.value} aria-label="내보내기 진행률" />
+          <div className="export-sheet-meta"><span id="export-progress-label">{Math.round(exportState.value)}%</span><span id="export-format-label">{exportState.format}</span></div>
+          <Button id="cancel-export" variant="outline" size="sm" onClick={() => window.dispatchEvent(new CustomEvent(exportState.value >= 100 ? 'tototo:export-close' : 'tototo:export-cancel'))}>{exportState.value >= 100 ? '닫기' : '취소'}</Button>
+        </SheetContent>
+      </Sheet>
       <audio id="audio" preload="metadata" />
     </div>
   </TooltipProvider>;
@@ -167,4 +183,8 @@ function Workspace() {
 // Mount controls before the engine binds listeners. Tab panels stay mounted so
 // switching inspectors never replaces the canvas, audio element or file inputs.
 flushSync(() => createRoot(document.getElementById('root')!).render(<Workspace />));
-void import('./main');
+void import('./main').catch(error => {
+  const status = document.querySelector<HTMLElement>('#load-status');
+  if (status) { status.dataset.error = 'true'; status.textContent = `시각화 엔진을 불러오지 못했습니다. ${error instanceof Error ? error.message : String(error)}`; }
+  console.error(error);
+});

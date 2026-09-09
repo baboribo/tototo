@@ -212,23 +212,15 @@ caption.addEventListener('input', () => syncFromAudio());
 for (const control of [fps, impact, tileFade, bpm, tempoScale, beatOffset]) control.addEventListener('input', () => { updateTempoUI(); if(tileMode==='preload')rebuildTiles();else syncFromAudio(); });
 perimeterSource.addEventListener('input',()=>syncFromAudio());
 
-const exportSheet = document.querySelector<HTMLDialogElement>('#export-sheet')!;
-const exportSheetStatus = document.querySelector<HTMLElement>('#export-sheet-status')!;
-const exportProgress = document.querySelector<HTMLElement>('#export-progress')!;
-const exportProgressLabel = document.querySelector<HTMLElement>('#export-progress-label')!;
-const exportFormatLabel = document.querySelector<HTMLElement>('#export-format-label')!;
 let exportCancel = false;
-function setExportProgress(message: string, value: number) {
+function setExportProgress(message: string, value: number, format?: string) {
   const percent = Math.max(0, Math.min(100, Math.round(value)));
-  exportSheetStatus.textContent = message;
-  exportProgress.style.width = `${percent}%`;
-  exportProgressLabel.textContent = `${percent}%`;
+  window.dispatchEvent(new CustomEvent('tototo:export-progress', { detail: { message, value: percent, format } }));
 }
 function openExportSheet(mime: string) {
   exportCancel = false;
-  exportFormatLabel.textContent = mime.startsWith('video/mp4') ? 'MP4' : 'WebM';
+  window.dispatchEvent(new CustomEvent('tototo:export-open', { detail: { format: mime.startsWith('video/mp4') ? 'MP4' : 'WebM' } }));
   setExportProgress('빠른 렌더링을 준비하고 있습니다…', 0);
-  if (!exportSheet.open) exportSheet.showModal();
 }
 function downloadExport(blob: Blob, mime: string) {
   const isMp4 = mime.startsWith('video/mp4');
@@ -441,24 +433,24 @@ async function exportVideo() {
       if (!webm) throw new Error('브라우저가 재생 가능한 MP4 컨테이너를 만들지 못했습니다.');
       setExportProgress('브라우저의 MP4 인덱스가 불완전해 호환 포맷으로 다시 내보내고 있습니다…', 0);
       audio.pause(); audio.currentTime = 0; blob = await realtimeExport(webm); outputMime = webm;
-      exportFormatLabel.textContent = 'WebM · 호환 대체';
+      setExportProgress('호환 WebM으로 전환했습니다.', 0, 'WebM · 호환 대체');
     }
     downloadExport(blob, outputMime);
     const outputName = outputMime.startsWith('video/mp4') ? 'MP4' : 'WebM';
     setExportProgress(`${outputName} 내보내기가 완료되었습니다.`, 100);
     status.dataset.error = 'false'; status.textContent = `${selectedName} · ${outputName} 내보내기 완료`;
-    setTimeout(() => { if (exportSheet.open) exportSheet.close(); }, 800);
+    setTimeout(() => window.dispatchEvent(new CustomEvent('tototo:export-close')), 800);
   } catch (error) {
     const message = error instanceof Error ? error.message : '동영상 내보내기에 실패했습니다.';
     setExportProgress(message, 0); status.textContent = message; status.dataset.error = exportCancel ? 'false' : 'true';
-    if (exportSheet.open) exportSheet.close();
+    window.dispatchEvent(new CustomEvent('tototo:export-close'));
   } finally {
     audio.pause(); audio.currentTime = Math.min(originalTime, currentDuration); audio.playbackRate = originalPlaybackRate; playing = false; clearAnalysis(); syncFromAudio();
     if (originalPlaying) { try { await setPlaying(true); } catch { status.textContent = '내보내기는 완료했지만 재생을 다시 시작하지 못했습니다.'; } }
     exporting = false; exportButton.disabled = !ready; toggle.disabled = reset.disabled = scrubber.disabled = !ready; if (!originalPlaying) updatePlayControl();
   }
 }
-document.querySelector<HTMLButtonElement>('#cancel-export')!.addEventListener('click', () => { exportCancel = true; setExportProgress('내보내기를 취소하고 있습니다…', 0); });
+window.addEventListener('tototo:export-cancel', () => { if (!exporting) return; exportCancel = true; setExportProgress('내보내기를 취소하고 있습니다…', 0); });
 exportButton.addEventListener('click', () => { void exportVideo(); });
 
 async function setPlaying(next: boolean) {
@@ -561,12 +553,17 @@ document.querySelector<HTMLInputElement>('#drum-file')!.addEventListener('change
 document.querySelector<HTMLInputElement>('#other-file')!.addEventListener('change', event => {
   otherFile=(event.target as HTMLInputElement).files?.[0];applyStems.disabled=!(drumFile&&otherFile);
 });
-const modeDialog=document.querySelector<HTMLDialogElement>('#tile-mode-dialog')!;
-applyStems.addEventListener('click',()=>{if(drumFile&&otherFile)modeDialog.showModal();});
-for(const [id,mode] of [['#choose-live','live'],['#choose-preload','preload']] as const) {
-  document.querySelector(id)!.addEventListener('click',()=>{modeDialog.close();if(drumFile&&otherFile)void loadFile(drumFile,otherFile,mode);});
-}
-document.querySelector('#cancel-tile-mode')!.addEventListener('click',()=>modeDialog.close());
+let modeDialogOpen = false;
+window.addEventListener('tototo:tile-mode-open', () => { modeDialogOpen = true; });
+window.addEventListener('tototo:tile-mode-close', () => { modeDialogOpen = false; });
+applyStems.addEventListener('click',()=>{if(drumFile&&otherFile)window.dispatchEvent(new CustomEvent('tototo:tile-mode-open'));});
+document.addEventListener('click', event => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>('#choose-live, #choose-preload, #cancel-tile-mode');
+  if (!target) return;
+  if (target.id === 'cancel-tile-mode') { window.dispatchEvent(new CustomEvent('tototo:tile-mode-close')); return; }
+  window.dispatchEvent(new CustomEvent('tototo:tile-mode-close'));
+  if (drumFile && otherFile) void loadFile(drumFile, otherFile, target.id === 'choose-preload' ? 'preload' : 'live');
+});
 monitor.addEventListener('change',()=>{
   if(!ready||!stemUrls)return;
   const url=stemUrls[monitor.value as keyof typeof stemUrls],time=audio.currentTime,resume=playing,version=loadVersion;
@@ -578,10 +575,10 @@ monitor.addEventListener('change',()=>{
   },{once:true});
   audio.src=url;audio.load();
 });
-document.querySelector('#demo')!.addEventListener('click', () => { void loadFile(testSound()); });
-document.querySelector('#rhythm')!.addEventListener('click', () => { void loadFile(testSound(true)); });
+document.querySelector('#demo')!.addEventListener('click', () => { status.textContent = '진단 사운드를 생성하고 있습니다…'; void loadFile(testSound()); });
+document.querySelector('#rhythm')!.addEventListener('click', () => { status.textContent = '리듬 진단 사운드를 생성하고 있습니다…'; void loadFile(testSound(true)); });
 document.addEventListener('keydown', event => {
-  if(modeDialog.open)return;
+  if(modeDialogOpen)return;
   if (event.target instanceof Element && event.target.closest('[role="slider"], [role="tab"], summary, a, [contenteditable="true"]')) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLSelectElement) return;
   if (event.key === ' ') { event.preventDefault(); toggle.click(); }
