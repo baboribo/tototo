@@ -1,5 +1,9 @@
 # Terrace motion study
 
+## 2026-09-09 — user correction
+
+The user corrected both the stationary tiles and the subsequent repetition of a fixed 16-cell pattern. On revisiting the video, paused frame-step screenshots around the displayed 0:53–0:54 showed shifting cell edges together with changing solid, stippled and empty areas. These are discrete samples; exact FPS, fades and stem assignments cannot be established from them. The implementation now creates non-wrapping audio-history columns and drum-event ink on a shared moving grid. Departed cells expire; new audio supplies incoming content. Kick ducking and fades remain. The fixed-pad and repeating-pattern interpretations are superseded. Birth-time band selection and event placement remain explicit implementation hypotheses.
+
 ## 2026-09-07 — current implementation
 
 The linked YouTube page was opened directly and identified as **テラス席**, channel **俷**. Current inspection sampled 0 s, 5 s and adjacent steps, 53.925 s, 107.85 s, and 161.775–162.775 s with paused frame steps. Screenshots immediately after a seek can still show the previous decoded frame; follow-up captures were used for comparisons. This was discrete visual sampling, not a claim to have heard or measured the entire audio track.

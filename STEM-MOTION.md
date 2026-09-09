@@ -1,5 +1,15 @@
 # Central drum tiles
 
+## Optional full-song preload
+
+The two-stem load action offers live computation or preload. Preload builds a full world-space strip with a band or drum-family assignment per tile, plus a compact musical reaction timeline. At every playback time ALL strip tiles react to the current music, including tiles outside the crop and tiles that have not reached it yet. Only raster drawing is culled to the visible square. Kick ducking and recovery apply to all rest-stem tiles simultaneously. Live generation is unchanged.
+
+Changing gain, FPS, fade, impact, tempo or detected hits cancels obsolete compilation, pauses playback and regenerates the track with progress reporting. Load and generation versions reject stale worker results. Playback resumes at the preserved position if it was previously running; a new load starts paused. Tests check offscreen/future drum reactions, hidden rest-tile kick ducking/recovery, deterministic seeking and immutable strip positions at 10/24 FPS; browser tests cover both load modes and regeneration.
+
+## 2026-09-09 — audio history replaces cyclic tiles
+
+The current renderer uses unbounded world columns, one 15-pixel cell per beat (0.42 seconds as fallback), with shared rounded transport and a fixed crop. Each incoming rest-stem column samples its own birth-time audio; a deterministic spatial hash selects bands from that sample. Drum events print into world cells and may overwrite older ink. Neither column nor hit wraps to the right after leaving the left edge. Kick ducking and fade still affect the visible rest-stem history. The fixed-pad and repeating-lattice implementations below were regressions; their descriptions are historical, not current routing. Spatial placement is an implementation hypothesis, not a recovered reference algorithm.
+
 ## Current routing (2026-09-07)
 
 The central 4×4 area now combines both analysed stems through fixed pad assignments. A subset of pads follows frequency bands in the non-drum stem and can remain visibly pressed; the remaining pads are reused by fixed drum families. A sufficiently strong kick ducks the held non-drum pads, after which they return over the adjustable tile-fade duration. Drum EQ channel enable, bands and thresholds still update drum pads and pen marks together. The perimeter defaults to features from drums plus remainder, with a source selector in the appearance settings. Its segmented pieces move along the square, while signal energy and attacks control their ink. The eraser follows the arrival of the same written mark, about 1.244 seconds later. Historical random drum-tile and non-drum pen descriptions below are superseded.

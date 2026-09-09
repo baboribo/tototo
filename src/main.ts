@@ -1,6 +1,6 @@
 import { identifyAudio, testSound } from './audio-file';
 import { at, type Signal } from './signal';
-import { MotionRenderer, frameTime } from './motion';
+import { MotionRenderer, frameTime, type PreloadedTiles } from './motion';
 import { beatPulse, type Tempo } from './tempo';
 import { recentHits, type DrumHit } from './drums';
 import { wav } from './separation';
@@ -30,6 +30,12 @@ let mediaReady = false;
 let signal: Signal | undefined;
 let otherSignal: Signal | undefined;
 let hits: DrumHit[] = [];
+let tileMode: 'live' | 'preload' = 'live';
+let preloadedTiles: PreloadedTiles | undefined;
+let tilesWorker: Worker | undefined;
+let tilesTimer: ReturnType<typeof setTimeout> | undefined;
+let tilesVersion = 0;
+let resumeAfterTiles = false;
 let stemUrls: {mix:string;drums:string;other:string}|undefined;
 let auxiliaryUrls:string[]=[];
 let drumFile:File|undefined,otherFile:File|undefined;
@@ -50,7 +56,34 @@ const beatOffset = document.querySelector<HTMLInputElement>('#beat-offset')!;
 const tempoReadout = document.querySelector<HTMLElement>('#tempo-readout')!;
 const tempoDetail = document.querySelector<HTMLElement>('#tempo-detail')!;
 const beatLight = document.querySelector<HTMLElement>('#beat-light')!;
-const drumPanel=new DrumPanel(audio,next=>{hits=next;syncFromAudio();});
+const drumPanel=new DrumPanel(audio,next=>{hits=next;if(tileMode==='preload')rebuildTiles();else syncFromAudio();});
+
+function rebuildTiles() {
+  if (tileMode !== 'preload' || !signal || loadFailed) return;
+  clearTimeout(tilesTimer); tilesWorker?.terminate(); tilesWorker=undefined;
+  const generation=++tilesVersion, version=loadVersion;
+  preloadedTiles=undefined;
+  resumeAfterTiles ||= playing;
+  audio.pause(); playing=false; ready=false; updatePlayControl();
+  toggle.disabled=reset.disabled=scrubber.disabled=monitor.disabled=true;
+  status.textContent=`${selectedName} · 곡 전체 타일 사전 생성 준비 중…`;
+  document.querySelector('#tile-mode-readout')!.textContent='사전 생성 · 준비 중…';
+  tilesTimer=setTimeout(()=>{
+    const compiler=new Worker(new URL('./tiles.worker.ts',import.meta.url),{type:'module'});
+    tilesWorker=compiler;
+    compiler.onmessage=(event:MessageEvent<{progress?:number;track?:PreloadedTiles;error?:string}>)=>{
+      if(version!==loadVersion||generation!==tilesVersion||loadFailed)return;
+      if(event.data.progress!==undefined){status.textContent=`${selectedName} · 곡 전체 타일 사전 생성 ${event.data.progress}%`;return;}
+      compiler.terminate();tilesWorker=undefined;
+      if(!event.data.track){fail(event.data.error??'타일 사전 생성에 실패했습니다. 다시 불러오세요.');return;}
+      preloadedTiles=event.data.track;
+      document.querySelector('#tile-mode-readout')!.textContent=`사전 생성 · ${preloadedTiles.tileCount.toLocaleString()}개 타일 · ${preloadedTiles.duration.toFixed(1)}초 준비 완료`;
+      enableWhenReady();
+    };
+    compiler.onerror=()=>{if(version===loadVersion&&generation===tilesVersion)fail('타일 사전 생성에 실패했습니다. 다시 불러오세요.');};
+    compiler.postMessage({signal,gain:Number(sensitivity.value),options:{fps:Number(fps.value),impact:Number(impact.value),tileFade:Number(tileFade.value),tempo:effectiveTempo(),hits,otherSignal}});
+  },150);
+}
 
 function updatePlayControl() {
   const label = playing ? '일시정지' : '재생';
@@ -75,7 +108,7 @@ function updateTempoUI() {
 function clamp(value: number, min = 0, max = 1) { return Math.max(min, Math.min(max, value)); }
 function draw(time: number, _delta = 0) {
   const tempo = effectiveTempo();
-  renderer.render(signal, time, Number(sensitivity.value), caption.value, { fps: Number(fps.value), impact: Number(impact.value), tileFade: Number(tileFade.value), tempo, hits, otherSignal, perimeterSource: perimeterSource.value as PerimeterSource });
+  renderer.render(signal, time, Number(sensitivity.value), caption.value, { fps: Number(fps.value), impact: Number(impact.value), tileFade: Number(tileFade.value), tempo, hits, otherSignal, preloadedTiles, perimeterSource: perimeterSource.value as PerimeterSource });
   document.querySelector('#drum-readout')!.textContent=recentHits(hits,frameTime(time,Number(fps.value))).map(h=>h.kind.toUpperCase()).filter((v,i,a)=>a.indexOf(v)===i).join(' · ')||'—';
   const feature = at(signal, time);
   readout.textContent = `${String(Math.floor(time / 60)).padStart(2, '0')}:${(time % 60).toFixed(3).padStart(6, '0')}`;
@@ -99,12 +132,14 @@ async function ensureAudioGraph() { audioContext ??= new AudioContext(); }
 
 function enableWhenReady() {
   if (!mediaReady || !signal || loadFailed) return;
+  if (tileMode==='preload'&&!preloadedTiles) return;
   ready = true; toggle.disabled = reset.disabled = scrubber.disabled = false;
   monitor.disabled=false;
   scrubber.max = String(currentDuration);
   document.querySelector('#duration-readout')!.textContent = `${String(Math.floor(currentDuration / 60)).padStart(2, '0')}:${String(Math.floor(currentDuration % 60)).padStart(2, '0')}`;
   status.textContent = `${selectedName} · ${currentDuration.toFixed(1)}초 · 준비됨. 재생을 눌러주세요.`;
-  draw(0);
+  syncFromAudio();
+  if(resumeAfterTiles){resumeAfterTiles=false;void setPlaying(true).catch(()=>fail('재생을 다시 시작하지 못했습니다.'));}
 }
 
 async function analyseFile(file: File, version: number, restFile?:File) {
@@ -158,9 +193,10 @@ async function analyseFile(file: File, version: number, restFile?:File) {
   worker.onerror = () => { if (version === loadVersion) fail('오디오 분석을 완료하지 못했습니다. 파일을 다시 선택하세요.'); };
   worker.postMessage({ samples, restSamples, sampleRate: decoded.sampleRate }, restSamples?[samples.buffer,restSamples.buffer]:[samples.buffer]);
 }
-sensitivity.addEventListener('input', () => syncFromAudio());
+sensitivity.addEventListener('input', () => {if(tileMode==='preload')rebuildTiles();else syncFromAudio();});
 caption.addEventListener('input', () => syncFromAudio());
-for (const control of [fps, impact, tileFade, bpm, tempoScale, beatOffset, perimeterSource]) control.addEventListener('input', () => { updateTempoUI(); syncFromAudio(); });
+for (const control of [fps, impact, tileFade, bpm, tempoScale, beatOffset]) control.addEventListener('input', () => { updateTempoUI(); if(tileMode==='preload')rebuildTiles();else syncFromAudio(); });
+perimeterSource.addEventListener('input',()=>syncFromAudio());
 
 async function setPlaying(next: boolean) {
   if (!ready) return;
@@ -181,6 +217,7 @@ function clearAnalysis() {
   lastRendered = -1;
 }
 function fail(message: string) {
+  clearTimeout(tilesTimer);tilesWorker?.terminate();tilesWorker=undefined;tilesVersion++;resumeAfterTiles=false;
   loadFailed = true;
   clearTimeout(loadTimeout);
   worker?.terminate(); worker = undefined;
@@ -189,7 +226,10 @@ function fail(message: string) {
   updatePlayControl(); toggle.disabled = reset.disabled = scrubber.disabled = true;
   status.textContent = message; status.dataset.error = 'true';
 }
-async function loadFile(file: File, restFile?:File) {
+async function loadFile(file: File, restFile?:File, mode: 'live'|'preload' = 'live') {
+  clearTimeout(tilesTimer);tilesWorker?.terminate();tilesWorker=undefined;tilesVersion++;
+  preloadedTiles=undefined;tileMode=mode;resumeAfterTiles=false;
+  document.querySelector('#tile-mode-readout')!.textContent=mode==='preload'?'사전 생성 · 오디오 분석 대기':'즉흥 생성 · 현재 방식';
   drumPanel.clear();
   const version = ++loadVersion;
   loadFailed = false;
@@ -258,7 +298,12 @@ document.querySelector<HTMLInputElement>('#drum-file')!.addEventListener('change
 document.querySelector<HTMLInputElement>('#other-file')!.addEventListener('change', event => {
   otherFile=(event.target as HTMLInputElement).files?.[0];applyStems.disabled=!(drumFile&&otherFile);
 });
-applyStems.addEventListener('click',()=>{if(drumFile&&otherFile)void loadFile(drumFile,otherFile);});
+const modeDialog=document.querySelector<HTMLDialogElement>('#tile-mode-dialog')!;
+applyStems.addEventListener('click',()=>{if(drumFile&&otherFile)modeDialog.showModal();});
+for(const [id,mode] of [['#choose-live','live'],['#choose-preload','preload']] as const) {
+  document.querySelector(id)!.addEventListener('click',()=>{modeDialog.close();if(drumFile&&otherFile)void loadFile(drumFile,otherFile,mode);});
+}
+document.querySelector('#cancel-tile-mode')!.addEventListener('click',()=>modeDialog.close());
 monitor.addEventListener('change',()=>{
   if(!ready||!stemUrls)return;
   const url=stemUrls[monitor.value as keyof typeof stemUrls],time=audio.currentTime,resume=playing,version=loadVersion;
@@ -273,6 +318,7 @@ monitor.addEventListener('change',()=>{
 document.querySelector('#demo')!.addEventListener('click', () => { void loadFile(testSound()); });
 document.querySelector('#rhythm')!.addEventListener('click', () => { void loadFile(testSound(true)); });
 document.addEventListener('keydown', event => {
+  if(modeDialog.open)return;
   if (event.target instanceof Element && event.target.closest('[role="slider"], [role="tab"], summary, a, [contenteditable="true"]')) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLSelectElement) return;
   if (event.key === ' ') { event.preventDefault(); toggle.click(); }

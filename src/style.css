@@ -202,3 +202,10 @@ kbd { border: 1px solid #d8dbd0; border-radius: 3px; padding: 1px 4px; backgroun
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.tile-mode-dialog { margin: auto; width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 26px; border: 1px solid #d1d3ca; border-radius: 12px; background: #f9faf6; color: #30332a; box-shadow: 0 20px 70px #0003; }
+.tile-mode-dialog::backdrop { background: #20251b77; }
+.tile-mode-dialog h2 { font-size: 20px; margin: 0 0 10px; }
+.tile-mode-dialog p { margin: 12px 0; line-height: 1.6; }
+.tile-mode-choices { display: grid; gap: 12px; margin: 20px 0; }
+.tile-mode-choices button { height: auto; min-height: 82px; display: flex; flex-direction: column; align-items: flex-start; white-space: normal; text-align: left; padding: 16px; }
+.tile-mode-choices small { font-weight: 400; line-height: 1.6; color: #64695d; }

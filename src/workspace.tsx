@@ -98,6 +98,17 @@ function Workspace() {
                   <p className="field-help">같은 시작 시점에서 분리한 드럼과 나머지 스템을 선택하세요.</p>
                   <div className="stem-file-list"><StemFileInput id="drum-file" label="드럼 스템" /><StemFileInput id="other-file" label="나머지 스템" /></div>
                   <Button id="apply-stems" className="w-full" disabled>두 스템 불러오기</Button>
+                  <p id="tile-mode-readout" className="field-help">타일 생성 방식은 불러올 때 선택합니다.</p>
+                  <dialog id="tile-mode-dialog" className="tile-mode-dialog" aria-labelledby="tile-mode-title" aria-describedby="tile-mode-description">
+                    <h2 id="tile-mode-title">타일 생성 방식</h2>
+                    <p id="tile-mode-description">이 곡의 타일을 어떻게 준비할까요?</p>
+                    <div className="tile-mode-choices">
+                      <Button id="choose-live" variant="outline"><span>즉흥 생성 · 현재 방식</span><small>재생 위치의 오디오로 타일을 계산합니다.</small></Button>
+                      <Button id="choose-preload" variant="outline"><span>사전 생성 · 프리로드</span><small>곡 전체의 타일과 반응을 미리 준비한 뒤 재생합니다.</small></Button>
+                    </div>
+                    <p className="field-help">사전 생성은 준비 시간이 필요합니다. 감도·박자·드럼 설정을 바꾸면 다시 생성합니다.</p>
+                    <Button id="cancel-tile-mode" variant="ghost">취소</Button>
+                  </dialog>
                   <details className="technical-note"><summary>입력 안내</summary><p id="stem-mode">드럼과 나머지 파일은 같은 곡에서 같은 시작 시점으로 분리한 스템이어야 합니다.</p></details>
                   <div className="stem-downloads"><a id="download-drums" hidden><Download aria-hidden="true" />드럼 저장</a><a id="download-other" hidden><Download aria-hidden="true" />나머지 저장</a></div>
                 </section>
