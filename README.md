@@ -18,6 +18,7 @@ npm run dev
 ```sh
 npm test
 npm run build
+npm run format:check
 ```
 
 검증은 매번 현재 소스를 새로 번들링합니다. 빌드는 `dist/`에 생성됩니다. `node_modules/`, `dist/`, `.verification/`, `*.tsbuildinfo`는 생성물이므로 Git에 포함하지 않습니다. 기존 저장소의 Windows 전용 의존성은 Git 추적에서 제외했으며, 각 컴퓨터에서 `npm ci`로 설치합니다.
@@ -35,23 +36,31 @@ npm run build
 
 ## UI 검증
 
-`npx playwright install chromium`으로 테스트 브라우저를 설치하고 `npm run test:ui`를 실행합니다. 별도 테스트 서버에서 창 크기별 배치, 재생, 시점 이동, 탭 전환 시 캔버스 보존, 슬라이더 연결, 파일 오류 처리를 확인합니다.
+`npx playwright install chromium`으로 테스트 브라우저를 설치하고 `npm run test:ui`를 실행합니다. 별도 테스트 서버에서 창 크기별 배치, 재생, 시점 이동, 탭 전환 시 캔버스 보존, 드럼 컨트롤, 파일 오류 처리를 확인합니다. 실제 내려받은 영상의 재생·시점 이동, 내보내기 취소·실패 후 복구, 작업 공간 재마운트와 자원 해제도 검증합니다. 결과물은 `.verification/`에 저장하며 Vite 파일 감시에서 제외합니다.
+
+`npm run format`으로 소스와 테스트를 같은 스타일로 정리합니다. 빌드는 엄격한 타입 검사와 사용하지 않는 변수·인자 검사를 포함합니다.
 
 ## 핵심 파일
 
-- `src/workspace.tsx`: 편집 작업 공간과 shadcn/ui 컴포넌트 연결. 탭은 숨겨진 상태에도 마운트를 유지합니다.
+- `src/main.ts`: React 앱 진입점. 개발 중 모듈 교체 시 기존 React 루트를 해제합니다.
+- `src/workspace.tsx`: 작업 공간과 엔진의 시작·종료, 키보드·재생 UI. 탭은 숨겨진 상태에도 마운트를 유지합니다.
+- `src/audio-settings.tsx`, `src/visual-settings.tsx`, `src/workspace-controls.tsx`: React와 shadcn/ui로 구성한 입력·설정 컨트롤.
+- `src/app-state.ts`: 타입이 있는 앱 상태와 React 구독. 컨트롤은 엔진 함수를 직접 호출하며 DOM ID나 사용자 정의 전역 이벤트로 데이터를 전달하지 않습니다.
+- `src/engine.ts`: 작업 공간마다 생성되는 오디오·분석·재생 조정자. `dispose()`에서 비동기 작업을 취소하고 이벤트·Worker·오디오·파일 URL·애니메이션을 해제합니다.
+- `src/audio-analysis.ts`: 오디오 디코딩, 스테레오 채널 선택, 스템 믹싱, 취소 가능한 분석 Worker 호출.
+- `src/video-export.ts`, `src/webcodecs.ts`, `src/mp4.ts`: 영상 생성·호환 녹화·코덱 타입·MP4 컨테이너. 내보내기 중 소스와 설정을 고정하고 완료·취소·실패 후 재생 위치와 상태를 복원합니다.
 - `src/components/ui/`, `components.json`: 공식 shadcn CLI로 가져온 컴포넌트와 설정.
 - `src/style.css`: 레이아웃, 테마, 반응형 규칙.
 
 - `src/reactive-ink.ts`: 테두리 이동·분절·오디오 반응, 드럼 자국과 지우개 도착 계산.
 - `src/motion.ts`: 타일 계획, 10 FPS 시간 양자화, 픽셀 렌더링.
 - `src/signal.ts`, `src/separation.ts`, `src/analysis.worker.ts`: 음원 분리와 FFT 분석.
-- `src/drum-eq.ts`, `src/drum-panel.ts`: 드럼 타격 검출과 조절 UI.
-- `src/main.ts`: 파일 로딩, 취소, 재생, 시점 이동, 스템 연결.
+- `src/drum-eq.ts`: 드럼 타격 검출.
+- `src/drum-editor.tsx`, `src/drum-controller.ts`, `src/drum-graphs.ts`: 각각 React 드럼 UI, 드럼 설정·단독 재생 제어, Canvas 그래프 그리기.
 - `verify-reactive-ink.ts`: 이동, 모서리 통과, 소리별 반응, 타격 누락, 펜·지우개, 결정적 시점 이동 검증.
 
-`src/score.ts`는 사용하지 않는 과거 파일이며 앱에 import되지 않습니다.
+사용하지 않던 `score.ts`와 DOM으로 UI를 만들던 `drum-panel.ts`는 제거했습니다. 분석·렌더링 알고리즘은 React와 독립적으로 유지합니다.
 
 ## 참고와 한계
 
-참고 영상 관찰 및 구현 가설은 `REFERENCE-STUDY.md`, 스템 동작은 `STEM-MOTION.md`, 저장소 점검은 `REPOSITORY-AUDIT.md`에 기록했습니다. 영상의 실제 제작 알고리즘·드럼 스템 사용 여부는 확인할 수 없습니다. 화면을 재생하는 타임라인이 아니라 입력한 오디오에 반응하는 규칙을 구현합니다. HPSS와 악기 분류는 근사치라 보컬·피아노 어택이 드럼으로 감지될 수 있습니다.
+참고 영상 관찰 및 구현 가설은 `REFERENCE-STUDY.md`, 스템 동작은 `STEM-MOTION.md`에 기록했습니다. 영상의 실제 제작 알고리즘·드럼 스템 사용 여부는 확인할 수 없습니다. 화면을 재생하는 타임라인이 아니라 입력한 오디오에 반응하는 규칙을 구현합니다. HPSS와 악기 분류는 근사치라 보컬·피아노 어택이 드럼으로 감지될 수 있습니다.
